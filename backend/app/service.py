@@ -1,5 +1,7 @@
 import asyncio
+import csv
 import hashlib
+import io
 import random
 import secrets
 from datetime import timedelta
@@ -121,11 +123,18 @@ class ExperimentService:
                 task.cancel()
 
     @classmethod
+    def cancel_all_tasks(cls) -> None:
+        for sid in list(cls._timer_tasks.keys()):
+            cls.cancel_timer(sid)
+        for sid in list(cls._ai_tasks.keys()):
+            cls.cancel_ai_tasks(sid)
+
+    @classmethod
     def schedule_discussion_timer(
         cls,
         session_id: UUID,
         expected_phase: str,
-        duration_seconds: int,
+        duration_seconds: float,
     ) -> None:
         cls.cancel_timer(session_id)
 
@@ -286,6 +295,109 @@ class ExperimentService:
             tasks.append(asyncio.create_task(_ai_voter_worker()))
 
         cls._ai_tasks[session_id] = tasks
+
+
+    @classmethod
+    async def export_session_csv(cls, db: AsyncSession, session_id: UUID) -> str:
+        sess_res = await db.execute(
+            select(ExperimentSession).where(ExperimentSession.id == session_id)
+        )
+        session = sess_res.scalar_one_or_none()
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found.",
+            )
+        if session.phase != "COMPLETED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="CSV export is only available for completed sessions.",
+            )
+
+        result_res = await db.execute(
+            select(ExperimentResult).where(ExperimentResult.session_id == session_id)
+        )
+        exp_result = result_res.scalar_one_or_none()
+        if not exp_result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Experiment results not found for session.",
+            )
+
+        slot_by_id = {p.id: p.slot_id for p in session.participants}
+        winner_slot = slot_by_id.get(exp_result.decision_maker_id, "")
+        totals = exp_result.totals_json or {}
+
+        msg_res = await db.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.round_number.asc(), Message.created_at.asc(), Message.id.asc())
+        )
+        messages = list(msg_res.scalars().all())
+
+        vote_res = await db.execute(
+            select(Vote)
+            .where(Vote.session_id == session_id)
+            .order_by(Vote.round_number.asc(), Vote.created_at.asc(), Vote.id.asc())
+        )
+        votes = list(vote_res.scalars().all())
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "session_id",
+                "condition_key",
+                "record_type",
+                "round_number",
+                "actor_id",
+                "target_id",
+                "message_content",
+                "timestamp_utc",
+                "player_a_total_votes",
+                "player_b_total_votes",
+                "player_c_total_votes",
+                "decision_maker_id",
+            ]
+        )
+
+        for m in messages:
+            writer.writerow(
+                [
+                    str(session.id),
+                    session.condition,
+                    "message",
+                    m.round_number,
+                    slot_by_id.get(m.participant_id, ""),
+                    "",
+                    m.content,
+                    m.created_at.isoformat() if m.created_at else "",
+                    totals.get("player_a", 0),
+                    totals.get("player_b", 0),
+                    totals.get("player_c", 0),
+                    winner_slot,
+                ]
+            )
+
+        for v in votes:
+            writer.writerow(
+                [
+                    str(session.id),
+                    session.condition,
+                    "vote",
+                    v.round_number,
+                    slot_by_id.get(v.voter_id, ""),
+                    slot_by_id.get(v.target_id, ""),
+                    "",
+                    v.created_at.isoformat() if v.created_at else "",
+                    totals.get("player_a", 0),
+                    totals.get("player_b", 0),
+                    totals.get("player_c", 0),
+                    winner_slot,
+                ]
+            )
+
+        return output.getvalue()
 
     @staticmethod
     def hash_token(raw_token: str) -> str:

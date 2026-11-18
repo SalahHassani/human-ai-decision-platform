@@ -1,11 +1,27 @@
-import React from 'react'
+import React, { useState } from 'react'
+import { downloadSessionCsv } from '../services/api'
 
 export default function ResultsView({ sessionState, myParticipant }) {
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState(null)
+
   const result = sessionState.result
   if (!result) return null
 
   const participants = sessionState.participants || []
   const isMeWinner = result.decision_maker_id === myParticipant?.id
+
+  const handleExport = async () => {
+    setExporting(true)
+    setExportError(null)
+    try {
+      await downloadSessionCsv(sessionState.session_id)
+    } catch (err) {
+      setExportError(err.message)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div style={cardStyle}>
@@ -60,6 +76,41 @@ export default function ResultsView({ sessionState, myParticipant }) {
           })}
         </tbody>
       </table>
+
+      <div
+        style={{
+          marginTop: 20,
+          paddingTop: 16,
+          borderTop: '1px solid #e5e7eb',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <span style={{ fontSize: 13, color: '#6b7280' }}>
+          Research Export (messages, round votes, totals, Decision Maker)
+        </span>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          style={{
+            padding: '8px 14px',
+            borderRadius: 6,
+            border: '1px solid #2563eb',
+            background: '#eff6ff',
+            color: '#1d4ed8',
+            fontWeight: 600,
+            fontSize: 13,
+            cursor: exporting ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {exporting ? 'Exporting...' : 'Download CSV'}
+        </button>
+      </div>
+      {exportError && (
+        <div style={{ marginTop: 8, color: '#b91c1c', fontSize: 13 }}>{exportError}</div>
+      )}
     </div>
   )
 }

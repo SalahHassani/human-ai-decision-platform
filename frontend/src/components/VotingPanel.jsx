@@ -9,6 +9,11 @@ export default function VotingPanel({ sessionState, myParticipant, onSubmitVote 
   const submittedIds = voteStatus?.submitted_participant_ids || []
   const hasVoted = myParticipant ? submittedIds.includes(myParticipant.id) : false
 
+  // Hide the participant's own identity from selectable voting options
+  const eligibleCandidates = (sessionState.participants || []).filter(
+    (p) => p.id !== myParticipant?.id
+  )
+
   const handleVote = async (e) => {
     e.preventDefault()
     if (!selectedTarget || selectedTarget === myParticipant?.id || hasVoted || submitting) return
@@ -30,42 +35,33 @@ export default function VotingPanel({ sessionState, myParticipant, onSubmitVote 
       </div>
 
       <p style={{ color: '#4b5563', marginTop: 8 }}>
-        Select another participant to serve as the group&apos;s <strong>Decision Maker</strong>{' '}
-        (self-voting is not allowed). Individual choices stay hidden until the final results.
+        Select one of the other two participants to serve as the group&apos;s{' '}
+        <strong>Decision Maker</strong> (your own identity,{' '}
+        <strong>{myParticipant?.display_name}</strong>, is excluded from voting options).
       </p>
 
       <form onSubmit={handleVote} style={{ marginTop: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-          {(sessionState.participants || []).map((p) => {
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+          {eligibleCandidates.map((p) => {
             const isSelected = selectedTarget === p.id
-            const isMe = p.id === myParticipant?.id
-            const isDisabled = hasVoted || isMe
-
             return (
               <button
                 key={p.id}
                 type="button"
-                disabled={isDisabled}
-                onClick={() => !isDisabled && setSelectedTarget(p.id)}
+                disabled={hasVoted}
+                onClick={() => !hasVoted && setSelectedTarget(p.id)}
                 style={{
-                  padding: 16,
+                  padding: 18,
                   borderRadius: 8,
                   border: isSelected ? '2px solid #2563eb' : '1px solid #d1d5db',
-                  background: isMe ? '#f3f4f6' : isSelected ? '#eff6ff' : '#ffffff',
-                  opacity: isMe ? 0.65 : 1,
-                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                  background: isSelected ? '#eff6ff' : '#ffffff',
+                  cursor: hasVoted ? 'not-allowed' : 'pointer',
                   textAlign: 'center',
                 }}
               >
-                <div style={{ fontWeight: 700, fontSize: 16 }}>
-                  {p.display_name} {isMe ? '(You)' : ''}
-                </div>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>{p.display_name}</div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                  {isMe
-                    ? 'Cannot vote for yourself'
-                    : submittedIds.includes(p.id)
-                    ? 'Vote submitted'
-                    : 'Awaiting vote'}
+                  {submittedIds.includes(p.id) ? 'Vote submitted' : 'Awaiting vote'}
                 </div>
               </button>
             )

@@ -54,9 +54,8 @@ class AISettings(BaseModel):
 
 
 class VotingSettings(BaseModel):
-    allow_self_vote: bool = True
-    tie_break: list[str] = Field(default_factory=lambda: ["round_2_votes", "alphabetical_order"])
-
+    allow_self_vote: bool = False
+    tie_break: list[str] = ["round_2_votes", "alphabetical_order"]
 
 class RootConfig(BaseModel):
     experiment: ExperimentSettings
@@ -71,6 +70,10 @@ class ActiveExperimentConfig(BaseModel):
     experiment: ExperimentSettings
     ai: AISettings
     voting: VotingSettings
+    admin_token: str = Field(default_factory=lambda: os.getenv("ADMIN_TOKEN", "dev-admin-token"))
+    demo_mode: bool = Field(
+        default_factory=lambda: os.getenv("DEMO_MODE", "true").strip().lower() in ("1", "true", "yes")
+    )
 
 
 def load_active_config(

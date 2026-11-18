@@ -1,4 +1,5 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN || 'dev-admin-token'
 
 async function request(path, options = {}) {
   const { headers = {}, ...restOptions } = options
@@ -36,6 +37,7 @@ export function getActiveSession() {
 export function resetActiveSession(conditionKey = null) {
   return request('/api/sessions/active/reset', {
     method: 'POST',
+    headers: { 'X-Admin-Token': ADMIN_TOKEN },
     body: JSON.stringify(conditionKey ? { condition_key: conditionKey } : {}),
   })
 }
@@ -69,5 +71,24 @@ export function submitVote(sessionId, token, targetId) {
 export function advanceDiscussion(sessionId) {
   return request(`/api/sessions/${sessionId}/advance`, {
     method: 'POST',
+    headers: { 'X-Admin-Token': ADMIN_TOKEN },
   })
+}
+
+export async function downloadSessionCsv(sessionId) {
+  const res = await fetch(`${API_URL}/api/sessions/${sessionId}/export.csv`, {
+    headers: { 'X-Admin-Token': ADMIN_TOKEN },
+  })
+  if (!res.ok) {
+    throw new Error(`Export failed (HTTP ${res.status})`)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `session_${sessionId}_export.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }

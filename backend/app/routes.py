@@ -1,3 +1,4 @@
+import secrets
 from typing import Optional
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
     status,
@@ -35,6 +37,22 @@ router = APIRouter(tags=["experiment"])
 def get_active_config(request: Request) -> ActiveExperimentConfig:
     return request.app.state.config
 
+
+def require_admin_access(
+    request: Request,
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+) -> None:
+    cfg: ActiveExperimentConfig = request.app.state.config
+    if not cfg.demo_mode and not x_admin_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo controls are disabled in production mode.",
+        )
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, cfg.admin_token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Valid X-Admin-Token header is required for administrative controls.",
+        )
 
 async def get_current_participant(
     session_id: UUID,
@@ -66,16 +84,16 @@ async def get_active_session(
     return await ExperimentService.build_session_state(db, session, session_cfg)
 
 
-@router.post("/api/sessions/active/reset", response_model=SessionStateResponse)
-async def reset_active_session(
-    payload: Optional[CreateSessionRequest] = None,
-    db: AsyncSession = Depends(get_db),
-    cfg: ActiveExperimentConfig = Depends(get_active_config),
-):
-    condition_override = payload.condition_key if payload else None
-    session = await ExperimentService.create_session(db, cfg, condition_key=condition_override)
-    session_cfg = load_active_config(condition_key=session.condition)
-    return await ExperimentService.build_session_state(db, session, session_cfg)
+# @router.post("/api/sessions/active/reset", response_model=SessionStateResponse)
+# async def reset_active_session(
+#     payload: Optional[CreateSessionRequest] = None,
+#     db: AsyncSession = Depends(get_db),
+#     cfg: ActiveExperimentConfig = Depends(get_active_config),
+# ):
+#     condition_override = payload.condition_key if payload else None
+#     session = await ExperimentService.create_session(db, cfg, condition_key=condition_override)
+#     session_cfg = load_active_config(condition_key=session.condition)
+#     return await ExperimentService.build_session_state(db, session, session_cfg)
 
 
 @router.get("/api/sessions/{session_id}", response_model=SessionStateResponse)
@@ -162,10 +180,10 @@ async def get_results(
     return result
 
 
-@router.post("/api/sessions/{session_id}/advance", response_model=SessionStateResponse)
-async def advance_discussion_phase(session_id: UUID):
-    """Demo/testing helper to expire an active discussion timer immediately."""
-    return await ExperimentService.advance_discussion_if_active(session_id)
+# @router.post("/api/sessions/{session_id}/advance", response_model=SessionStateResponse)
+# async def advance_discussion_phase(session_id: UUID):
+#     """Demo/testing helper to expire an active discussion timer immediately."""
+#     return await ExperimentService.advance_discussion_if_active(session_id)
 
 
 @router.websocket("/ws/sessions/{session_id}")
@@ -192,3 +210,48 @@ async def session_websocket(
     finally:
         ws_manager.disconnect(session_id, websocket)
         await ExperimentService.set_participant_connection(session_id, participant.id, False)
+
+
+@router.post(
+    "/api/sessions/active/reset",
+    response_model=SessionStateResponse,
+    dependencies=[Depends(require_admin_access)],
+)
+async def reset_active_session(
+    payload: Optional[CreateSessionRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    cfg: ActiveExperimentConfig = Depends(get_active_config),
+):
+    ExperimentService.cancel_all_tasks()
+    condition_override = payload.condition_key if payload else None
+    session = await ExperimentService.create_session(db, cfg, condition_key=condition_override)
+    session_cfg = load_active_config(condition_key=session.condition)
+    return await ExperimentService.build_session_state(db, session, session_cfg)
+
+@router.post(
+    "/api/sessions/{session_id}/advance",
+    response_model=SessionStateResponse,
+    dependencies=[Depends(require_admin_access)],
+)
+async def advance_discussion_phase(session_id: UUID):
+    """Admin/demo helper to expire an active discussion timer immediately."""
+    return await ExperimentService.advance_discussion_if_active(session_id)
+
+
+@router.get(
+    "/api/sessions/{session_id}/export.csv",
+    dependencies=[Depends(require_admin_access)],
+)
+async def export_session_csv(
+    session_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-only CSV export of completed session messages, votes, and final outcome."""
+    csv_text = await ExperimentService.export_session_csv(db, session_id)
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="session_{session_id}_export.csv"'
+        },
+    )

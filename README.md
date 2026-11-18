@@ -1,130 +1,195 @@
 # Human–AI Group Decision-Making Experiment Platform
 
-A lightweight, real-time web application for running a 3-participant group decision-making experiment across configurable human/AI compositions (**3 Humans**, **2 Humans + 1 AI**, or **1 Human + 2 AI**). Participants interact under neutral identifiers (**Player A**, **Player B**, **Player C**) across two timed discussion rounds and two blind voting rounds to elect a single **Decision Maker**.
+A reproducible, real-time web application for running a 3-participant group decision-making experiment across configurable human/AI compositions (**3 Humans**, **2 Humans + 1 AI**, or **1 Human + 2 AI**). Participants interact under neutral identifiers (**Player A**, **Player B**, **Player C**) across two timed discussion rounds and two blind voting rounds to elect a single **Decision Maker**.
 
 ---
 
-## 1. Quick Start 
+## 1. Quick Start (Installation & Running from Scratch)
 
 ### Prerequisites
-- **Docker** & **Docker Compose** 
+- **Docker** & **Docker Compose** (v2+)
 - **Git**
 
-### Installation & Startup
+### Step-by-Step Startup
 1. **Clone the repository**:
    ```bash
    git clone <your-repo-url>
    cd human-ai-decision-platform
    ```
 
-2. **Create environment configuration (optional)**:
+2. **Create local environment file (optional)**:
    ```bash
    cp .env.example .env
    ```
-   *(Default settings work out-of-the-box without editing `.env`.)*
+   *(All services run out-of-the-box with sensible defaults even without creating `.env`.)*
 
-3. **Build and launch all services**:
+3. **Build and start all containers**:
    ```bash
    docker compose up --build -d
    ```
 
-4. **Verify services are running**:
-   - **Frontend Experiment UI**: `http://localhost:5173`
+4. **Open the application**:
+   - **Participant Experiment UI**: `http://localhost:5173`
    - **Backend Health & Active Config**: `http://localhost:8000/api/health`
    - **Interactive OpenAPI / Swagger Docs**: `http://localhost:8000/docs`
 
 ### Exposed Ports & Services
 
-| Service | Container Port | Host Port | Purpose |
-| :--- | :--- | :--- | :--- |
-| **Frontend** (`React` + `Vite`) | `5173` | `5173` | Participant web interface (`http://localhost:5173`) |
-| **Backend** (`FastAPI` + `Uvicorn`) | `8000` | `8000` | REST API & WebSocket server (`ws://localhost:8000`) |
-| **Database** (`PostgreSQL 16`) | `5432` | `5433` | Persistent session, participant, message, vote, and result storage *(mapped to `5433` on host to avoid colliding with any local Postgres instance)* |
+| Service | Container Port | Host Port | Protocol | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| **Frontend** (`React` + `Vite`) | `5173` | `5173` | HTTP | Participant web interface (`http://localhost:5173`) |
+| **Backend** (`FastAPI` + `Uvicorn`) | `8000` | `8000` | HTTP / WS | REST API & WebSocket server (`ws://localhost:8000`) |
+| **Database** (`PostgreSQL 16`) | `5432` | `5433` | TCP | Persistent session, participant, message, vote, and result storage *(mapped to `5433` on host to prevent conflicts with any local Postgres instance)* |
 
 ---
 
-## 2. How to Use & Test the Experiment
+## 2. Configuration & Customization (`config.yml` & `.env`)
 
-### Single-Browser Demo (`1 Human + 2 AI`)
-1. Open `http://localhost:5173`.
-2. Under **Switch Condition (Demo)** on the join screen, select **1 Human + 2 AI** (`condition_3`).
-3. Click **Join Active Session**. You are assigned **Player A**, and the experiment immediately starts **Round 1 of 2 — Group Discussion**.
-4. Send a message in the chat; **Player B** and **Player C** (AI participants) respond automatically with jittered delays (`4–14s`) without revealing their AI identity.
-5. Wait for the 60-second timer to expire (or click **End Discussion Now** in the header to skip the timer during a demo).
-6. Cast your vote in **Round 1**, complete **Round 2 Discussion & Voting**, and view the elected **Decision Maker** and round-by-round vote breakdown.
+All experiment rules live in `config.yml` and are validated at startup via Pydantic (`backend/app/config.py`).
 
-### Multi-Human Testing (`2 Humans + 1 AI` or `3 Humans`)
-- Participant session tokens are stored in `sessionStorage` (isolated per browser tab).
-- To simulate multiple human participants on one machine:
-  1. Select **2 Humans + 1 AI** (`condition_2`) or **3 Humans** (`condition_1`).
-  2. Open `http://localhost:5173` in **2 or 3 separate browser tabs**.
-  3. Click **Join Active Session** in each tab. The Waiting Room updates live and transitions all tabs simultaneously into Round 1 once all required human slots are filled.
-
----
-
-## 3. Configuration (`config.yml` & `.env`)
-
-All experiment parameters live in `config.yml` and are validated at startup via Pydantic (`backend/app/config.py`).
-
-### Switching Experiment Conditions
-You can switch between the three built-in conditions in three ways:
-1. **In the UI**: Click **3 Humans**, **2 Humans + 1 AI**, or **1 Human + 2 AI** on the landing screen (or click **Reset Session** anytime).
-2. **Via `.env`**: Set `EXPERIMENT_CONDITION=condition_1` (or `condition_2` / `condition_3`) and restart the backend (`docker compose restart backend`).
-3. **Via REST API**:
+### Switching Experimental Conditions
+1. **In the Web UI**: On the landing screen, click **3 Humans** (`condition_1`), **2 Humans + 1 AI** (`condition_2`), or **1 Human + 2 AI** (`condition_3`) under **Switch Condition (Demo)**.
+2. **Via `.env`**: Set `EXPERIMENT_CONDITION=condition_1` (or `condition_2` / `condition_3`) and run `docker compose restart backend`.
+3. **Via Admin REST API**:
    ```bash
    curl -X POST http://localhost:8000/api/sessions/active/reset \
      -H "Content-Type: application/json" \
+     -H "X-Admin-Token: dev-admin-token" \
      -d '{"condition_key": "condition_3"}'
    ```
 
-### Customizable Parameters in `config.yml`
-- **`experiment.discussion_duration_seconds`**: Length of each discussion round (default: `60`).
-- **`experiment.rounds`**: Number of discussion + voting cycles (default: `2`).
-- **`voting.allow_self_vote`**: Set to `false` by default (prevents participants and AI agents from voting for themselves); set to `true` to allow self-voting.
-- **`voting.tie_break`**: Deterministic tie-breaking priority (`[round_2_votes, alphabetical_order]`).
-- **`ai.min_response_delay_seconds` / `ai.max_response_delay_seconds`**: Jittered latency window for AI chat messages (`4` to `14` seconds by default) so AI agents do not reply in robotic lockstep.
-- **`ai.max_messages_per_round`**: Upper cap on messages per AI participant per round (`2` by default).
+### Configurable Rules in `config.yml` & `.env`
+- **Self-Voting Policy (`voting.allow_self_vote`)**: Set to `false` by default in both `config.yml` and `VotingSettings`—neither human nor AI participants can vote for themselves, and the UI hides the participant's own identity from selectable voting options. Set to `true` in `config.yml` to permit self-voting.
+- **Discussion Timer (`experiment.discussion_duration_seconds`)**: Default `60` seconds per discussion round.
+- **Number of Rounds (`experiment.rounds`)**: Default `2` discussion + voting cycles.
+- **Tie-Breaking Priority (`voting.tie_break`)**: `[round_2_votes, alphabetical_order]`.
+- **AI Response Timing (`ai.min_response_delay_seconds` / `ai.max_response_delay_seconds`)**: Jittered latency window (`4` to `14` seconds) and `ai.max_messages_per_round` (`2`) so AI participants reply naturally without robotic lockstep.
+- **Demo / Admin Protection (`ADMIN_TOKEN`, `DEMO_MODE`)**: Administrative endpoints (`/reset`, `/advance`, and `/export.csv`) require the `X-Admin-Token` header (`dev-admin-token` by default in local demo mode).
 
 ---
 
-## 4. Running Automated Tests
+## 3. Experimental Conditions & End-to-End Walkthrough
 
-An automated `pytest` integration and unit test suite (`backend/tests/test_experiment.py`) verifies condition loading, slot overflow rejection, strict AI blindness, phase enforcement, self-vote/duplicate-vote guards, full 2-round completion, and tie-breaking:
+| Condition Key | Composition | Human Slots | AI Slots | How to Test Locally |
+| :--- | :--- | :--- | :--- | :--- |
+| `condition_1` | **3 Humans** | Player A, B, C | None | Open `http://localhost:5173` in **3 separate browser tabs** and click **Join Active Session** in each. |
+| `condition_2` | **2 Humans + 1 AI** | Player A, B | Player C | Open `http://localhost:5173` in **2 separate browser tabs** and join in both. |
+| `condition_3` | **1 Human + 2 AI** | Player A | Player B, C | Open `http://localhost:5173` in **1 browser tab** and click **Join Active Session** (starts immediately). |
+
+*(Participant session tokens are stored in `sessionStorage`, so each browser tab acts as an independent participant.)*
+
+### Verified End-to-End Demo Workflow (`1 Human + 2 AI`)
+1. Open `http://localhost:5173`, select **1 Human + 2 AI**, and click **Join Active Session**.
+2. You are assigned **Player A**, and the session transitions immediately to `ROUND_1_DISCUSSION` with a server-synchronized 60-second countdown.
+3. Post a message in the chat; **Player B** and **Player C** respond automatically after jittered delays (`4–14s`) using neutral display names.
+4. Let the 60-second timer expire automatically (or click **End Discussion Now** in the header during a live demo) to enter `ROUND_1_VOTING`.
+5. Cast your blind vote for **Player B** or **Player C**. Intermediate UI status shows only submission progress (`1/3`, `2/3`, `3/3`), never vote targets.
+6. Complete `ROUND_2_DISCUSSION` and `ROUND_2_VOTING` to reach `COMPLETED`, view the elected **Decision Maker** and round-by-round tally, and click **Download CSV** to export the session dataset.
+
+---
+
+## 4. Architecture & Project Structure
+
+```text
++-------------------------------------------------------------------+
+|                   React + Vite Frontend (:5173)                   |
+|  WaitingRoom | DiscussionPanel | VotingPanel | ResultsView        |
++---------------------------------+---------------------------------+
+                                  | REST (HTTP) + WebSocket (/ws)
++---------------------------------v---------------------------------+
+|                   FastAPI Modular Monolith (:8000)                |
+|  - Server-Authoritative State Machine (per-session asyncio.Lock)  |
+|  - Public DTO Isolation (strictly strips AI/token metadata)       |
+|  - Background Round Timers & Offline RuleBasedAIAgent Tasks       |
+|  - Admin-Protected Controls & CSV Research Export                 |
++---------------------------------+---------------------------------+
+                                  | SQLAlchemy Async (asyncpg)
++---------------------------------v---------------------------------+
+|                      PostgreSQL 16 (:5432 -> :5433)               |
+|  sessions | participants | messages | votes | experiment_results  |
++-------------------------------------------------------------------+
+```
+
+```text
+human-ai-decision-platform/
+├── config.yml                  # Experimental conditions, timers, AI delays, voting rules
+├── docker-compose.yml          # Multi-container orchestration (db, backend, frontend)
+├── .env.example                # Environment variable template (no real secrets)
+├── ai_prompts.md               # AI development log (models, tools, and prompts)
+├── README.md                   # Setup, usage, architecture, and verification guide
+├── backend/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── app/
+│   │   ├── main.py             # FastAPI app initialization & lifespan startup
+│   │   ├── config.py           # Pydantic validation for config.yml & env vars
+│   │   ├── models.py           # SQLAlchemy async ORM schema
+│   │   ├── schemas.py          # Blind public DTOs & request/response models
+│   │   ├── service.py          # State machine, timers, voting, WebSockets, CSV export
+│   │   ├── ai_agent.py         # Extensible AIAgent interface & RuleBasedAIAgent
+│   │   └── routes.py           # REST & WebSocket endpoints + admin auth guard
+│   └── tests/
+│       └── test_experiment.py  # 10 automated integration & unit tests (pytest)
+└── frontend/
+    ├── Dockerfile
+    ├── package.json
+    └── src/
+        ├── App.jsx
+        ├── hooks/useExperimentSocket.js
+        ├── services/api.js
+        └── components/
+            ├── WaitingRoom.jsx
+            ├── DiscussionPanel.jsx
+            ├── VotingPanel.jsx
+            └── ResultsView.jsx
+```
+
+---
+
+## 5. Development Process (8 Milestones) & 4-Hour Trade-Offs
+
+### Incremental 8-Milestone Build
+- **Milestone 0 — Scaffold & Config**: Docker Compose setup (`db`, `backend`, `frontend`) and Pydantic-validated `config.yml`.
+- **Milestone 1 — Persistence & Atomic Waiting Room**: PostgreSQL schema, SHA-256 participant tokens, and lock-protected slot assignment.
+- **Milestone 2 — Server-Authoritative State Machine**: Enforced lifecycle (`WAITING` → `ROUND_1_DISCUSSION` → `ROUND_1_VOTING` → `ROUND_2_DISCUSSION` → `ROUND_2_VOTING` → `COMPLETED`) with server-owned UTC timers.
+- **Milestone 3 — Real-Time WebSocket Chat**: Token-authenticated WebSocket stream with strict DTO blindness.
+- **Milestone 4 — AI Discussion Agents**: Context-aware `RuleBasedAIAgent` with non-repetitive templates and jittered delays.
+- **Milestone 5 — Blind Voting & Tie-Breaking**: Single-vote-per-round constraint, hidden intermediate tallies, and deterministic winner resolution.
+- **Milestone 6 — React Experiment UI**: Synchronized countdown timer, reconnect snapshot resync, self-vote exclusion in UI, and results view.
+- **Milestone 7 — Hardening, Verification & CSV Export**: Admin token guards on demo/export controls, WebSocket reconnect tests, CSV research export, and 10 passing `pytest` tests.
+
+### Key Design Decisions & Intentional Trade-Offs
+- **Offline `RuleBasedAIAgent` behind an Extensible `AIAgent` Interface**: Allows evaluators to run the full platform immediately offline with zero external API keys, deterministic testability, and zero rate-limit variance. Live LLM providers (e.g., OpenAI/Gemini) can be added by implementing `generate_response()` and `cast_vote()` in `backend/app/ai_agent.py`.
+- **Deterministic Voting & Tie-Breaking**: Combined Round 1 + Round 2 votes determine the winner; ties break first by **Round 2 votes** (capturing post-deliberation consensus) and then **alphabetical slot order** (`player_a` < `player_b` < `player_c`).
+- **Known Limitations (Single-Process Scope)**: WebSocket connections (`WebSocketManager`) and background timer/AI `asyncio.Task` registries are stored in-memory within the single FastAPI worker process rather than Redis pub/sub, keeping deployment self-contained in 3 containers for a 4-hour assessment scope.
+
+---
+
+## 6. API & WebSocket Reference
+
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/health` | Public | Health check and active configuration summary |
+| `GET` | `/api/sessions/active` | Public | Retrieve or auto-create the active session |
+| `POST` | `/api/sessions` | Public | Create a new session for a specified `condition_key` |
+| `POST` | `/api/sessions/{id}/join` | Public | Claim next open human slot and receive `participant_token` |
+| `GET` | `/api/sessions/{id}` | Public | Full authoritative session snapshot (used on load/reconnect) |
+| `POST` | `/api/sessions/{id}/messages` | `X-Participant-Token` | Post a message during an active discussion round |
+| `POST` | `/api/sessions/{id}/vote` | `X-Participant-Token` | Submit a blind vote during an active voting round |
+| `GET` | `/api/sessions/{id}/results` | Public | Retrieve final tallies and Decision Maker (`COMPLETED` only) |
+| `POST` | `/api/sessions/active/reset` | `X-Admin-Token` | Reset into a fresh session (supports `condition_key` override) |
+| `POST` | `/api/sessions/{id}/advance` | `X-Admin-Token` | Demo helper to immediately expire an active discussion timer |
+| `GET` | `/api/sessions/{id}/export.csv` | `X-Admin-Token` | Download anonymized research CSV for a `COMPLETED` session |
+| `WS` | `/ws/sessions/{id}?token=...` | Query `token` | Real-time events (`participant_joined`, `experiment_started`, `new_message`, `phase_changed`, `vote_status`, `experiment_completed`) |
+
+---
+
+## 7. Running Automated Tests
+
+Run the full 10-test integration and unit suite inside the backend container:
 
 ```bash
 docker compose exec backend pytest -v
 ```
 
----
-
-## 5. Architecture, Key Decisions & 4-Hour Trade-Offs
-
-### Development Process (8 Milestones: 0–7)
-The system was built incrementally across 8 verified milestones—from architecture & Docker scaffold (**Milestone 0**), PostgreSQL schema & atomic slot joining (**Milestone 1**), server-authoritative phase state machine (**Milestone 2**), authenticated WebSocket chat (**Milestone 3**), AI discussion agents (**Milestone 4**), blind voting & tie-breaking (**Milestone 5**), React UI integration (**Milestone 6**), to automated `pytest` verification & documentation (**Milestone 7**).
-
-### Key Design Decisions
-- **Server-Authoritative State Machine**: Every phase transition (`WAITING` → `ROUND_1_DISCUSSION` → `ROUND_1_VOTING` → `ROUND_2_DISCUSSION` → `ROUND_2_VOTING` → `COMPLETED`) is guarded by a per-session `asyncio.Lock` and server-owned UTC timestamps (`round_ends_at`), preventing race conditions and client timer drift.
-- **Zero AI Identity Leakage**: Internal columns (`participant_type`, `provider`, `model`, `token_hash`) are strictly isolated from public Pydantic DTOs. Clients only ever receive neutral slot IDs (`player_a`, `player_b`, `player_c`) and display names (`Player A`, `Player B`, `Player C`).
-- **Reconnect Resynchronization**: WebSocket events push real-time updates (`new_message`, `vote_status`, `phase_changed`), while `GET /api/sessions/{session_id}` returns the full authoritative snapshot on page refresh or socket reconnect.
-- **Extensible `AIAgent` Interface (`backend/app/ai_agent.py`)**: Abstracted behind `generate_response()` and `cast_vote()` so live LLM providers (e.g., OpenAI/Gemini) can be plugged in via `config.yml` without touching session or state-machine logic.
-
-### Intentional Trade-Offs (4-Hour Scope)
-- **Deterministic Offline AI Agent (`RuleBasedAIAgent`)**: Used a context-aware, non-repetitive rule-based agent with jittered delays instead of external LLM APIs so evaluators can run the platform offline immediately with zero API keys, zero network latency variance, and deterministic testability.
-- **Single-Process In-Memory WebSocket Registry & Timers**: Scoped `WebSocketManager` and `asyncio` round timers in-process in FastAPI rather than introducing Redis pub/sub, keeping deployment self-contained in 3 containers (`frontend`, `backend`, `db`).
-- **Lightweight Inline Styling**: Focused frontend effort on reliable state transitions, blind voting UX, and real-time synchronization rather than a heavy CSS framework.
-
----
-
-## 6. Key API & WebSocket Endpoints
-
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/health` | Service health and active `config.yml` summary |
-| `GET` | `/api/sessions/active` | Fetch or auto-create the active experiment session |
-| `POST` | `/api/sessions/active/reset` | Reset into a fresh session (optional `condition_key` body) |
-| `POST` | `/api/sessions/{id}/join` | Claim next available human slot and receive participant token |
-| `GET` | `/api/sessions/{id}` | Full public session state snapshot |
-| `POST` | `/api/sessions/{id}/messages` | Post discussion message (`X-Participant-Token` header) |
-| `POST` | `/api/sessions/{id}/vote` | Submit round vote (`X-Participant-Token` header) |
-| `GET` | `/api/sessions/{id}/results` | Retrieve Round 1, Round 2, combined totals, and Decision Maker |
-| `WS` | `/ws/sessions/{id}?token=...` | Authenticated real-time session event stream |
+The test suite verifies condition loading, slot overflow (`409`), strict AI identity blindness across REST/WebSocket/CSV payloads, phase guards, no-self-voting defaults and enforcement, tie-breaking, admin token protection (`403`), real timer expiration/cancellation, WebSocket reconnection sync, and CSV research export.
