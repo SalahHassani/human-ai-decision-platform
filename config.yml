@@ -32,3 +32,5 @@ ai:
 voting:
   allow_self_vote: false
   tie_break: [round_2_votes, alphabetical_order]
+
+  

@@ -41,3 +41,5 @@ The application was developed iteratively across 8 structured milestones (Milest
   - Updated `VotingSettings.allow_self_vote` default to `False` in `backend/app/config.py`.
   - Added `require_admin_access` (`X-Admin-Token`) to `POST /api/sessions/active/reset`, `POST /api/sessions/{session_id}/advance`, and `GET /api/sessions/{session_id}/export.csv`.
   - Expanded `backend/tests/test_experiment.py` from 5 to 10 automated `pytest` cases covering timers, admin authorization, WebSocket broadcasts/reconnection, and CSV research export privacy.
+
+  

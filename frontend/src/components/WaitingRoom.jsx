@@ -67,3 +67,4 @@ const badgeStyle = {
   fontSize: 13,
   fontWeight: 600,
 }
+

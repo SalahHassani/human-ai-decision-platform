@@ -94,3 +94,6 @@ class JoinSessionResponse(BaseModel):
     participant: ParticipantPublic
     participant_token: str
     session_state: SessionStateResponse
+
+
+    

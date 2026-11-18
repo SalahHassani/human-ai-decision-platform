@@ -92,3 +92,4 @@ export async function downloadSessionCsv(sessionId) {
   a.remove()
   URL.revokeObjectURL(url)
 }
+

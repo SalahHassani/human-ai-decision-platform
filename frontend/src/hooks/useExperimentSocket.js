@@ -74,3 +74,4 @@ export function useExperimentSocket(sessionId, token, onFullSync, onEvent) {
 
   return { connected }
 }
+

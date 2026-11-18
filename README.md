@@ -193,3 +193,4 @@ docker compose exec backend pytest -v
 ```
 
 The test suite verifies condition loading, slot overflow (`409`), strict AI identity blindness across REST/WebSocket/CSV payloads, phase guards, no-self-voting defaults and enforcement, tie-breaking, admin token protection (`403`), real timer expiration/cancellation, WebSocket reconnection sync, and CSV research export.
+
