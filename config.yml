@@ -1,0 +1,34 @@
+experiment:
+  rounds: 2
+  discussion_duration_seconds: 60
+
+conditions:
+  condition_1:
+    name: "Three Humans"
+    participants:
+      - { id: player_a, type: human }
+      - { id: player_b, type: human }
+      - { id: player_c, type: human }
+
+  condition_2:
+    name: "Two Humans and One AI"
+    participants:
+      - { id: player_a, type: human }
+      - { id: player_b, type: human }
+      - { id: player_c, type: ai, provider: rule_based, model: deterministic-v1 }
+
+  condition_3:
+    name: "One Human and Two AI"
+    participants:
+      - { id: player_a, type: human }
+      - { id: player_b, type: ai, provider: rule_based, model: deterministic-v1 }
+      - { id: player_c, type: ai, provider: rule_based, model: deterministic-v1 }
+
+ai:
+  min_response_delay_seconds: 4
+  max_response_delay_seconds: 14
+  max_messages_per_round: 2
+
+voting:
+  allow_self_vote: true
+  tie_break: [round_2_votes, alphabetical_order]

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+.vite/
+
+# Environment & IDE
+.env
+.DS_Store
+.vscode/
+.idea/
