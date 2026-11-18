@@ -91,3 +91,9 @@ async def join_session(
     cfg: ActiveExperimentConfig = Depends(get_active_config),
 ):
     return await ExperimentService.join_session(db, session_id, cfg)
+
+
+@router.post("/sessions/{session_id}/advance", response_model=SessionStateResponse)
+async def advance_discussion_phase(session_id: UUID):
+    """Demo/testing helper to expire an active discussion timer immediately."""
+    return await ExperimentService.advance_discussion_if_active(session_id)

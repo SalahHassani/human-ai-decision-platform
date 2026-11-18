@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import secrets
+from datetime import timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -9,7 +10,13 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import ActiveExperimentConfig, load_active_config
-from app.models import ExperimentPhase, ExperimentSession, Participant, utc_now
+from app.models import (
+    AsyncSessionLocal,
+    ExperimentPhase,
+    ExperimentSession,
+    Participant,
+    utc_now,
+)
 from app.schemas import (
     JoinSessionResponse,
     ParticipantPublic,
@@ -18,16 +25,51 @@ from app.schemas import (
 )
 
 
+VALID_TRANSITIONS: dict[str, set[str]] = {
+    ExperimentPhase.WAITING.value: {ExperimentPhase.ROUND_1_DISCUSSION.value},
+    ExperimentPhase.ROUND_1_DISCUSSION.value: {ExperimentPhase.ROUND_1_VOTING.value},
+    ExperimentPhase.ROUND_1_VOTING.value: {ExperimentPhase.ROUND_2_DISCUSSION.value},
+    ExperimentPhase.ROUND_2_DISCUSSION.value: {ExperimentPhase.ROUND_2_VOTING.value},
+    ExperimentPhase.ROUND_2_VOTING.value: {ExperimentPhase.COMPLETED.value},
+    ExperimentPhase.COMPLETED.value: set(),
+}
+
+
 class ExperimentService:
-    """Core session lifecycle, slot assignment, token auth, and state coordination."""
+    """Core session lifecycle, slot assignment, token auth, timers, and state machine."""
 
     _session_locks: dict[UUID, asyncio.Lock] = {}
+    _timer_tasks: dict[UUID, asyncio.Task] = {}
 
     @classmethod
     def get_session_lock(cls, session_id: UUID) -> asyncio.Lock:
         if session_id not in cls._session_locks:
             cls._session_locks[session_id] = asyncio.Lock()
         return cls._session_locks[session_id]
+
+    @classmethod
+    def cancel_timer(cls, session_id: UUID) -> None:
+        task = cls._timer_tasks.pop(session_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    @classmethod
+    def schedule_discussion_timer(
+        cls,
+        session_id: UUID,
+        expected_phase: str,
+        duration_seconds: int,
+    ) -> None:
+        cls.cancel_timer(session_id)
+
+        async def _timer_worker() -> None:
+            try:
+                await asyncio.sleep(duration_seconds)
+                await cls.advance_discussion_if_active(session_id, expected_phase)
+            except asyncio.CancelledError:
+                pass
+
+        cls._timer_tasks[session_id] = asyncio.create_task(_timer_worker())
 
     @staticmethod
     def hash_token(raw_token: str) -> str:
@@ -48,6 +90,63 @@ class ExperimentService:
             display_name=p.display_name,
             is_connected=p.is_connected,
         )
+
+    @classmethod
+    def ensure_discussion_phase(cls, session: ExperimentSession) -> int:
+        if session.phase == ExperimentPhase.ROUND_1_DISCUSSION.value:
+            return 1
+        if session.phase == ExperimentPhase.ROUND_2_DISCUSSION.value:
+            return 2
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Discussion messages are not accepted during phase '{session.phase}'.",
+        )
+
+    @classmethod
+    def ensure_voting_phase(cls, session: ExperimentSession) -> int:
+        if session.phase == ExperimentPhase.ROUND_1_VOTING.value:
+            return 1
+        if session.phase == ExperimentPhase.ROUND_2_VOTING.value:
+            return 2
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Votes are not accepted during phase '{session.phase}'.",
+        )
+
+    @classmethod
+    def _apply_transition(
+        cls,
+        session: ExperimentSession,
+        target_phase: str,
+        duration_seconds: int,
+    ) -> None:
+        allowed = VALID_TRANSITIONS.get(session.phase, set())
+        if target_phase not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Invalid phase transition from '{session.phase}' to '{target_phase}'.",
+            )
+        now = utc_now()
+        session.phase = target_phase
+
+        if target_phase in (
+            ExperimentPhase.ROUND_1_DISCUSSION.value,
+            ExperimentPhase.ROUND_2_DISCUSSION.value,
+        ):
+            if session.started_at is None:
+                session.started_at = now
+            session.round_started_at = now
+            session.round_ends_at = now + timedelta(seconds=duration_seconds)
+        elif target_phase in (
+            ExperimentPhase.ROUND_1_VOTING.value,
+            ExperimentPhase.ROUND_2_VOTING.value,
+        ):
+            session.round_started_at = None
+            session.round_ends_at = None
+        elif target_phase == ExperimentPhase.COMPLETED.value:
+            session.round_started_at = None
+            session.round_ends_at = None
+            session.completed_at = now
 
     @classmethod
     def build_session_state(
@@ -110,7 +209,7 @@ class ExperimentService:
                 provider=slot.provider if is_ai else None,
                 model=slot.model if is_ai else None,
                 token_hash=None,
-                is_connected=is_ai,  # AI agents are always ready in the waiting room
+                is_connected=is_ai,
                 joined_at=now if is_ai else None,
             )
             db.add(participant)
@@ -151,9 +250,13 @@ class ExperimentService:
         default_cfg: ActiveExperimentConfig,
     ) -> JoinSessionResponse:
         lock = cls.get_session_lock(session_id)
+        started_round_1 = False
+        duration = 60
+
         async with lock:
             session = await cls.get_session(db, session_id)
             cfg = load_active_config(condition_key=session.condition)
+            duration = cfg.experiment.discussion_duration_seconds
 
             if session.phase != ExperimentPhase.WAITING.value:
                 raise HTTPException(
@@ -182,27 +285,70 @@ class ExperimentService:
             assigned.is_connected = True
             assigned.joined_at = now
 
-            # Check waiting-room readiness: all human slots filled -> start Round 1
             remaining_open = [
                 p
                 for p in ordered
                 if p.participant_type == "human" and p.token_hash is None
             ]
             if not remaining_open:
-                session.phase = ExperimentPhase.ROUND_1_DISCUSSION.value
-                session.started_at = now
-                session.round_started_at = now
+                cls._apply_transition(
+                    session,
+                    ExperimentPhase.ROUND_1_DISCUSSION.value,
+                    duration,
+                )
+                started_round_1 = True
 
             await db.commit()
             await db.refresh(session)
-
             state = cls.build_session_state(session, cfg)
-            return JoinSessionResponse(
-                session_id=session.id,
-                participant=cls._to_public_participant(assigned),
-                participant_token=raw_token,
-                session_state=state,
+
+        if started_round_1:
+            cls.schedule_discussion_timer(
+                session.id,
+                ExperimentPhase.ROUND_1_DISCUSSION.value,
+                duration,
             )
+
+        return JoinSessionResponse(
+            session_id=session.id,
+            participant=cls._to_public_participant(assigned),
+            participant_token=raw_token,
+            session_state=state,
+        )
+
+    @classmethod
+    async def advance_discussion_if_active(
+        cls,
+        session_id: UUID,
+        expected_phase: Optional[str] = None,
+    ) -> Optional[SessionStateResponse]:
+        lock = cls.get_session_lock(session_id)
+        async with lock:
+            async with AsyncSessionLocal() as db:
+                session = await cls.get_session(db, session_id)
+                if expected_phase and session.phase != expected_phase:
+                    return None
+
+                if session.phase == ExperimentPhase.ROUND_1_DISCUSSION.value:
+                    next_phase = ExperimentPhase.ROUND_1_VOTING.value
+                elif session.phase == ExperimentPhase.ROUND_2_DISCUSSION.value:
+                    next_phase = ExperimentPhase.ROUND_2_VOTING.value
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Cannot advance discussion from phase '{session.phase}'.",
+                    )
+
+                cfg = load_active_config(condition_key=session.condition)
+                cls.cancel_timer(session_id)
+                cls._apply_transition(
+                    session,
+                    next_phase,
+                    cfg.experiment.discussion_duration_seconds,
+                )
+                await db.commit()
+                await db.refresh(session)
+                return cls.build_session_state(session, cfg)
 
     @classmethod
     async def authenticate_token(
