@@ -105,16 +105,22 @@ class RuleBasedAIAgent(AIAgent):
 
     async def cast_vote(self, context: AgentDecisionContext) -> str:
         """
-        Deterministic documented voting heuristic:
-        - Score each participant by constructive message count across the experiment so far.
-        - Slightly favor another participant who contributed constructively over self-voting,
-          unless no other participant spoke; break ties deterministically by slot order.
+        Deterministic documented voting heuristic (self-voting disallowed):
+        - Filter out the agent's own slot so it only evaluates peers.
+        - Rank remaining candidates by message count across the experiment so far,
+          breaking ties deterministically by slot order ('player_a' < 'player_b' < 'player_c').
         """
-        counts: dict[str, int] = {slot: 0 for slot in context.participant_slots}
+        eligible_slots = [
+            slot for slot in context.participant_slots if slot != context.self_slot_id
+        ]
+        counts: dict[str, int] = {slot: 0 for slot in eligible_slots}
         for msg in context.messages:
             if msg.sender_id in counts:
                 counts[msg.sender_id] += 1
 
+        ranked = sorted(eligible_slots, key=lambda s: (-counts.get(s, 0), s))
+        return ranked[0]
+    
         def candidate_score(slot: str) -> tuple[int, int, str]:
             msg_count = counts.get(slot, 0)
             is_other = 1 if (slot != context.self_slot_id and msg_count > 0) else 0

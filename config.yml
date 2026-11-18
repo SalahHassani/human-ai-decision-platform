@@ -30,5 +30,5 @@ ai:
   max_messages_per_round: 2
 
 voting:
-  allow_self_vote: true
+  allow_self_vote: false
   tie_break: [round_2_votes, alphabetical_order]
