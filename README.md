@@ -7,13 +7,13 @@ A reproducible, real-time web application for running a 3-participant group deci
 ## 1. Quick Start (Installation & Running from Scratch)
 
 ### Prerequisites
-- **Docker** & **Docker Compose** (v2+)
+- **Docker** & **Docker Compose**
 - **Git**
 
 ### Step-by-Step Startup
 1. **Clone the repository**:
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/SalahHassani/human-ai-decision-platform.git
    cd human-ai-decision-platform
    ```
 
