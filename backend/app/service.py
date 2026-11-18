@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import random
 import secrets
 from datetime import timedelta
 from typing import Optional
@@ -9,6 +10,11 @@ from fastapi import HTTPException, WebSocket, status
 from sqlalchemy import asc, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai_agent import (
+    AgentDecisionContext,
+    DiscussionMessageContext,
+    create_ai_agent,
+)
 from app.config import ActiveExperimentConfig, load_active_config
 from app.models import (
     AsyncSessionLocal,
@@ -73,10 +79,11 @@ ws_manager = WebSocketManager()
 
 
 class ExperimentService:
-    """Core session lifecycle, slot assignment, token auth, messaging, timers, and state machine."""
+    """Core session lifecycle, slot assignment, token auth, messaging, AI tasks, timers, and state machine."""
 
     _session_locks: dict[UUID, asyncio.Lock] = {}
     _timer_tasks: dict[UUID, asyncio.Task] = {}
+    _ai_tasks: dict[UUID, list[asyncio.Task]] = {}
 
     @classmethod
     def get_session_lock(cls, session_id: UUID) -> asyncio.Lock:
@@ -89,6 +96,13 @@ class ExperimentService:
         task = cls._timer_tasks.pop(session_id, None)
         if task and not task.done():
             task.cancel()
+
+    @classmethod
+    def cancel_ai_tasks(cls, session_id: UUID) -> None:
+        tasks = cls._ai_tasks.pop(session_id, [])
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
     @classmethod
     def schedule_discussion_timer(
@@ -107,6 +121,94 @@ class ExperimentService:
                 pass
 
         cls._timer_tasks[session_id] = asyncio.create_task(_timer_worker())
+
+    @classmethod
+    def schedule_ai_discussion_tasks(
+        cls,
+        session_id: UUID,
+        expected_phase: str,
+        round_number: int,
+        ai_participants: list[Participant],
+        cfg: ActiveExperimentConfig,
+    ) -> None:
+        cls.cancel_ai_tasks(session_id)
+        if not ai_participants:
+            return
+
+        tasks: list[asyncio.Task] = []
+        min_delay = cfg.ai.min_response_delay_seconds
+        max_delay = cfg.ai.max_response_delay_seconds
+        max_msgs = cfg.ai.max_messages_per_round
+        duration = cfg.experiment.discussion_duration_seconds
+
+        for ai_p in ai_participants:
+            agent = create_ai_agent(provider=ai_p.provider, model=ai_p.model)
+
+            async def _ai_speaker_worker(
+                participant_id: UUID = ai_p.id,
+                slot_id: str = ai_p.slot_id,
+                display_name: str = ai_p.display_name,
+                ai_impl=agent,
+            ) -> None:
+                try:
+                    cumulative_delay = 0.0
+                    for msg_idx in range(max_msgs):
+                        delay = random.uniform(min_delay, max_delay)
+                        # Stagger second message further into the round
+                        if msg_idx > 0:
+                            delay = max(delay, duration * 0.35)
+                        cumulative_delay += delay
+                        if cumulative_delay >= max(1.0, duration - 2.0):
+                            break
+
+                        await asyncio.sleep(delay)
+
+                        async with AsyncSessionLocal() as db:
+                            session = await cls.get_session(db, session_id)
+                            if session.phase != expected_phase:
+                                return
+
+                            public_msgs = await cls.list_public_messages(db, session)
+                            ctx = AgentDecisionContext(
+                                session_id=str(session_id),
+                                self_slot_id=slot_id,
+                                self_display_name=display_name,
+                                round_number=round_number,
+                                message_index=msg_idx,
+                                participant_slots=sorted(p.slot_id for p in session.participants),
+                                messages=[
+                                    DiscussionMessageContext(
+                                        sender_id=m.sender_id,
+                                        sender_name=m.sender_name,
+                                        round_number=m.round_number,
+                                        content=m.content,
+                                    )
+                                    for m in public_msgs
+                                ],
+                            )
+                            reply_text = await ai_impl.generate_response(ctx)
+                            audit = {
+                                "provider": ai_impl.provider,
+                                "model": ai_impl.model,
+                                "delay_seconds": round(delay, 2),
+                                "message_index": msg_idx,
+                            }
+                            await cls.add_message(
+                                db=db,
+                                session_id=session_id,
+                                participant_id=participant_id,
+                                content=reply_text,
+                                audit_metadata=audit,
+                            )
+                except asyncio.CancelledError:
+                    pass
+                except HTTPException:
+                    # Phase changed right before submission; ignore safely
+                    pass
+
+            tasks.append(asyncio.create_task(_ai_speaker_worker()))
+
+        cls._ai_tasks[session_id] = tasks
 
     @staticmethod
     def hash_token(raw_token: str) -> str:
@@ -322,6 +424,7 @@ class ExperimentService:
         lock = cls.get_session_lock(session_id)
         started_round_1 = False
         duration = 60
+        ai_participants: list[Participant] = []
 
         async with lock:
             session = await cls.get_session(db, session_id)
@@ -367,6 +470,7 @@ class ExperimentService:
                     duration,
                 )
                 started_round_1 = True
+                ai_participants = [p for p in ordered if p.participant_type == "ai"]
 
             await db.commit()
             await db.refresh(session)
@@ -384,6 +488,13 @@ class ExperimentService:
                 session.id,
                 ExperimentPhase.ROUND_1_DISCUSSION.value,
                 duration,
+            )
+            cls.schedule_ai_discussion_tasks(
+                session.id,
+                ExperimentPhase.ROUND_1_DISCUSSION.value,
+                round_number=1,
+                ai_participants=ai_participants,
+                cfg=cfg,
             )
             await ws_manager.broadcast_to_session(
                 session.id,
@@ -470,6 +581,7 @@ class ExperimentService:
 
                 cfg = load_active_config(condition_key=session.condition)
                 cls.cancel_timer(session_id)
+                cls.cancel_ai_tasks(session_id)
                 cls._apply_transition(
                     session,
                     next_phase,
