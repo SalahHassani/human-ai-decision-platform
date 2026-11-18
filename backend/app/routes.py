@@ -10,6 +10,7 @@ from fastapi import (
     Request,
     WebSocket,
     WebSocketDisconnect,
+    status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,11 +18,14 @@ from app.config import ActiveExperimentConfig, load_active_config
 from app.models import AsyncSessionLocal, Participant, get_db
 from app.schemas import (
     CreateSessionRequest,
+    ExperimentResultPublic,
     JoinSessionResponse,
     MessagePublic,
     ParticipantPublic,
     SendMessageRequest,
     SessionStateResponse,
+    SubmitVoteRequest,
+    VoteStatusPublic,
 )
 from app.service import ExperimentService, ws_manager
 
@@ -128,6 +132,36 @@ async def list_messages(
     return await ExperimentService.list_public_messages(db, session)
 
 
+@router.post("/api/sessions/{session_id}/vote", response_model=VoteStatusPublic, status_code=201)
+async def submit_vote(
+    session_id: UUID,
+    payload: SubmitVoteRequest,
+    participant: Participant = Depends(get_current_participant),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ExperimentService.submit_vote(
+        db=db,
+        session_id=session_id,
+        voter_id=participant.id,
+        target_slot_id=payload.target_id,
+    )
+
+
+@router.get("/api/sessions/{session_id}/results", response_model=ExperimentResultPublic)
+async def get_results(
+    session_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    session = await ExperimentService.get_session(db, session_id)
+    result = await ExperimentService.get_public_result(db, session)
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Experiment results are not available until Round 2 voting completes.",
+        )
+    return result
+
+
 @router.post("/api/sessions/{session_id}/advance", response_model=SessionStateResponse)
 async def advance_discussion_phase(session_id: UUID):
     """Demo/testing helper to expire an active discussion timer immediately."""
@@ -152,7 +186,6 @@ async def session_websocket(
 
     try:
         while True:
-            # Keep connection alive; commands use REST endpoints
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -50,6 +50,29 @@ class MessagePublic(BaseModel):
     created_at: datetime
 
 
+class SubmitVoteRequest(BaseModel):
+    target_id: Literal["player_a", "player_b", "player_c"]
+
+
+class VoteStatusPublic(BaseModel):
+    """Intermediate voting status: reveals who submitted, never whom they voted for."""
+
+    round_number: int
+    submitted_participant_ids: list[str]
+    votes_received: int
+    total_required: int = 3
+
+
+class ExperimentResultPublic(BaseModel):
+    session_id: UUID
+    totals_by_participant: dict[str, int]
+    round_1_totals: dict[str, int]
+    round_2_totals: dict[str, int]
+    decision_maker_id: str  # player_a | player_b | player_c
+    decision_maker_name: str  # Player A | Player B | Player C
+    completed_at: datetime
+
+
 class SessionStateResponse(BaseModel):
     session_id: UUID
     condition_key: str
@@ -62,6 +85,8 @@ class SessionStateResponse(BaseModel):
     required_humans: int
     joined_humans: int
     messages: list[MessagePublic] = Field(default_factory=list)
+    vote_status: Optional[VoteStatusPublic] = None
+    result: Optional[ExperimentResultPublic] = None
 
 
 class JoinSessionResponse(BaseModel):

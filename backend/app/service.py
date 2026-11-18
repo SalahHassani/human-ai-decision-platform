@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, WebSocket, status
 from sqlalchemy import asc, desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai_agent import (
@@ -19,17 +20,21 @@ from app.config import ActiveExperimentConfig, load_active_config
 from app.models import (
     AsyncSessionLocal,
     ExperimentPhase,
+    ExperimentResult,
     ExperimentSession,
     Message,
     Participant,
+    Vote,
     utc_now,
 )
 from app.schemas import (
+    ExperimentResultPublic,
     JoinSessionResponse,
     MessagePublic,
     ParticipantPublic,
     SLOT_DISPLAY_NAMES,
     SessionStateResponse,
+    VoteStatusPublic,
 )
 
 
@@ -41,6 +46,8 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     ExperimentPhase.ROUND_2_VOTING.value: {ExperimentPhase.COMPLETED.value},
     ExperimentPhase.COMPLETED.value: set(),
 }
+
+AISpec = tuple[UUID, str, str, Optional[str], Optional[str]]
 
 
 class WebSocketManager:
@@ -79,7 +86,7 @@ ws_manager = WebSocketManager()
 
 
 class ExperimentService:
-    """Core session lifecycle, slot assignment, token auth, messaging, AI tasks, timers, and state machine."""
+    """Core session lifecycle, slot assignment, token auth, messaging, AI tasks, voting, and state machine."""
 
     _session_locks: dict[UUID, asyncio.Lock] = {}
     _timer_tasks: dict[UUID, asyncio.Task] = {}
@@ -91,17 +98,26 @@ class ExperimentService:
             cls._session_locks[session_id] = asyncio.Lock()
         return cls._session_locks[session_id]
 
+    @staticmethod
+    def _extract_ai_specs(session: ExperimentSession) -> list[AISpec]:
+        return [
+            (p.id, p.slot_id, p.display_name, p.provider, p.model)
+            for p in session.participants
+            if p.participant_type == "ai"
+        ]
+
     @classmethod
     def cancel_timer(cls, session_id: UUID) -> None:
         task = cls._timer_tasks.pop(session_id, None)
-        if task and not task.done():
+        if task and not task.done() and task is not asyncio.current_task():
             task.cancel()
 
     @classmethod
     def cancel_ai_tasks(cls, session_id: UUID) -> None:
         tasks = cls._ai_tasks.pop(session_id, [])
+        current = asyncio.current_task()
         for task in tasks:
-            if not task.done():
+            if not task.done() and task is not current:
                 task.cancel()
 
     @classmethod
@@ -128,11 +144,11 @@ class ExperimentService:
         session_id: UUID,
         expected_phase: str,
         round_number: int,
-        ai_participants: list[Participant],
+        ai_specs: list[AISpec],
         cfg: ActiveExperimentConfig,
     ) -> None:
         cls.cancel_ai_tasks(session_id)
-        if not ai_participants:
+        if not ai_specs:
             return
 
         tasks: list[asyncio.Task] = []
@@ -141,20 +157,19 @@ class ExperimentService:
         max_msgs = cfg.ai.max_messages_per_round
         duration = cfg.experiment.discussion_duration_seconds
 
-        for ai_p in ai_participants:
-            agent = create_ai_agent(provider=ai_p.provider, model=ai_p.model)
+        for participant_id, slot_id, display_name, provider, model in ai_specs:
+            agent = create_ai_agent(provider=provider, model=model)
 
             async def _ai_speaker_worker(
-                participant_id: UUID = ai_p.id,
-                slot_id: str = ai_p.slot_id,
-                display_name: str = ai_p.display_name,
+                p_id: UUID = participant_id,
+                s_id: str = slot_id,
+                d_name: str = display_name,
                 ai_impl=agent,
             ) -> None:
                 try:
                     cumulative_delay = 0.0
                     for msg_idx in range(max_msgs):
                         delay = random.uniform(min_delay, max_delay)
-                        # Stagger second message further into the round
                         if msg_idx > 0:
                             delay = max(delay, duration * 0.35)
                         cumulative_delay += delay
@@ -171,8 +186,8 @@ class ExperimentService:
                             public_msgs = await cls.list_public_messages(db, session)
                             ctx = AgentDecisionContext(
                                 session_id=str(session_id),
-                                self_slot_id=slot_id,
-                                self_display_name=display_name,
+                                self_slot_id=s_id,
+                                self_display_name=d_name,
                                 round_number=round_number,
                                 message_index=msg_idx,
                                 participant_slots=sorted(p.slot_id for p in session.participants),
@@ -196,17 +211,79 @@ class ExperimentService:
                             await cls.add_message(
                                 db=db,
                                 session_id=session_id,
-                                participant_id=participant_id,
+                                participant_id=p_id,
                                 content=reply_text,
                                 audit_metadata=audit,
                             )
                 except asyncio.CancelledError:
                     pass
                 except HTTPException:
-                    # Phase changed right before submission; ignore safely
                     pass
 
             tasks.append(asyncio.create_task(_ai_speaker_worker()))
+
+        cls._ai_tasks[session_id] = tasks
+
+    @classmethod
+    def schedule_ai_voting_tasks(
+        cls,
+        session_id: UUID,
+        expected_phase: str,
+        round_number: int,
+        ai_specs: list[AISpec],
+    ) -> None:
+        cls.cancel_ai_tasks(session_id)
+        if not ai_specs:
+            return
+
+        tasks: list[asyncio.Task] = []
+        for participant_id, slot_id, display_name, provider, model in ai_specs:
+            agent = create_ai_agent(provider=provider, model=model)
+
+            async def _ai_voter_worker(
+                p_id: UUID = participant_id,
+                s_id: str = slot_id,
+                d_name: str = display_name,
+                ai_impl=agent,
+            ) -> None:
+                try:
+                    await asyncio.sleep(random.uniform(1.0, 2.5))
+                    async with AsyncSessionLocal() as db:
+                        session = await cls.get_session(db, session_id)
+                        if session.phase != expected_phase:
+                            return
+
+                        public_msgs = await cls.list_public_messages(db, session)
+                        ctx = AgentDecisionContext(
+                            session_id=str(session_id),
+                            self_slot_id=s_id,
+                            self_display_name=d_name,
+                            round_number=round_number,
+                            message_index=0,
+                            participant_slots=sorted(p.slot_id for p in session.participants),
+                            messages=[
+                                DiscussionMessageContext(
+                                    sender_id=m.sender_id,
+                                    sender_name=m.sender_name,
+                                    round_number=m.round_number,
+                                    content=m.content,
+                                )
+                                for m in public_msgs
+                            ],
+                        )
+                        target_slot = await ai_impl.cast_vote(ctx)
+                        await cls.submit_vote(
+                            db=db,
+                            session_id=session_id,
+                            voter_id=p_id,
+                            target_slot_id=target_slot,
+                        )
+                except asyncio.CancelledError:
+                    pass
+                except HTTPException:
+                    pass
+
+            tasks.append(asyncio.create_task(_ai_voter_worker()))
 
         cls._ai_tasks[session_id] = tasks
 
@@ -318,6 +395,61 @@ class ExperimentService:
         ]
 
     @classmethod
+    async def get_vote_status(
+        cls,
+        db: AsyncSession,
+        session: ExperimentSession,
+        round_number: int,
+    ) -> VoteStatusPublic:
+        participant_by_id = {p.id: p for p in session.participants}
+        result = await db.execute(
+            select(Vote).where(
+                Vote.session_id == session.id,
+                Vote.round_number == round_number,
+            )
+        )
+        votes = result.scalars().all()
+        submitted_slots = sorted(
+            participant_by_id[v.voter_id].slot_id
+            for v in votes
+            if v.voter_id in participant_by_id
+        )
+        return VoteStatusPublic(
+            round_number=round_number,
+            submitted_participant_ids=submitted_slots,
+            votes_received=len(submitted_slots),
+            total_required=3,
+        )
+
+    @classmethod
+    async def get_public_result(
+        cls,
+        db: AsyncSession,
+        session: ExperimentSession,
+    ) -> Optional[ExperimentResultPublic]:
+        result = await db.execute(
+            select(ExperimentResult).where(ExperimentResult.session_id == session.id)
+        )
+        record = result.scalar_one_or_none()
+        if not record:
+            return None
+        winner = next(
+            (p for p in session.participants if p.id == record.decision_maker_id),
+            None,
+        )
+        winner_slot = winner.slot_id if winner else "player_a"
+        winner_name = winner.display_name if winner else SLOT_DISPLAY_NAMES[winner_slot]
+        return ExperimentResultPublic(
+            session_id=session.id,
+            totals_by_participant=record.totals_json,
+            round_1_totals=record.round_1_json,
+            round_2_totals=record.round_2_json,
+            decision_maker_id=winner_slot,
+            decision_maker_name=winner_name,
+            completed_at=record.completed_at,
+        )
+
+    @classmethod
     async def build_session_state(
         cls,
         db: AsyncSession,
@@ -332,6 +464,19 @@ class ExperimentService:
             if p.participant_type == "human" and p.token_hash is not None
         )
         messages = await cls.list_public_messages(db, session)
+
+        vote_status: Optional[VoteStatusPublic] = None
+        if session.phase in (
+            ExperimentPhase.ROUND_1_VOTING.value,
+            ExperimentPhase.ROUND_2_VOTING.value,
+        ):
+            r_no = 1 if session.phase == ExperimentPhase.ROUND_1_VOTING.value else 2
+            vote_status = await cls.get_vote_status(db, session, r_no)
+
+        final_result: Optional[ExperimentResultPublic] = None
+        if session.phase == ExperimentPhase.COMPLETED.value:
+            final_result = await cls.get_public_result(db, session)
+
         return SessionStateResponse(
             session_id=session.id,
             condition_key=session.condition,
@@ -344,6 +489,8 @@ class ExperimentService:
             required_humans=required_humans,
             joined_humans=joined_humans,
             messages=messages,
+            vote_status=vote_status,
+            result=final_result,
         )
 
     @classmethod
@@ -393,7 +540,9 @@ class ExperimentService:
     @classmethod
     async def get_session(cls, db: AsyncSession, session_id: UUID) -> ExperimentSession:
         result = await db.execute(
-            select(ExperimentSession).where(ExperimentSession.id == session_id)
+            select(ExperimentSession)
+            .where(ExperimentSession.id == session_id)
+            .execution_options(populate_existing=True)
         )
         session = result.scalar_one_or_none()
         if not session:
@@ -424,7 +573,7 @@ class ExperimentService:
         lock = cls.get_session_lock(session_id)
         started_round_1 = False
         duration = 60
-        ai_participants: list[Participant] = []
+        ai_specs: list[AISpec] = []
 
         async with lock:
             session = await cls.get_session(db, session_id)
@@ -470,7 +619,7 @@ class ExperimentService:
                     duration,
                 )
                 started_round_1 = True
-                ai_participants = [p for p in ordered if p.participant_type == "ai"]
+                ai_specs = cls._extract_ai_specs(session)
 
             await db.commit()
             await db.refresh(session)
@@ -493,7 +642,7 @@ class ExperimentService:
                 session.id,
                 ExperimentPhase.ROUND_1_DISCUSSION.value,
                 round_number=1,
-                ai_participants=ai_participants,
+                ai_specs=ai_specs,
                 cfg=cfg,
             )
             await ws_manager.broadcast_to_session(
@@ -562,6 +711,8 @@ class ExperimentService:
     ) -> Optional[SessionStateResponse]:
         lock = cls.get_session_lock(session_id)
         state: Optional[SessionStateResponse] = None
+        ai_specs: list[AISpec] = []
+        voting_round: int = 1
 
         async with lock:
             async with AsyncSessionLocal() as db:
@@ -571,8 +722,10 @@ class ExperimentService:
 
                 if session.phase == ExperimentPhase.ROUND_1_DISCUSSION.value:
                     next_phase = ExperimentPhase.ROUND_1_VOTING.value
+                    voting_round = 1
                 elif session.phase == ExperimentPhase.ROUND_2_DISCUSSION.value:
                     next_phase = ExperimentPhase.ROUND_2_VOTING.value
+                    voting_round = 2
                 else:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
@@ -587,6 +740,7 @@ class ExperimentService:
                     next_phase,
                     cfg.experiment.discussion_duration_seconds,
                 )
+                ai_specs = cls._extract_ai_specs(session)
                 await db.commit()
                 await db.refresh(session)
                 state = await cls.build_session_state(db, session, cfg)
@@ -601,7 +755,205 @@ class ExperimentService:
                     "round_ends_at": state.round_ends_at.isoformat() if state.round_ends_at else None,
                 },
             )
+            cls.schedule_ai_voting_tasks(
+                session_id=session_id,
+                expected_phase=state.phase,
+                round_number=voting_round,
+                ai_specs=ai_specs,
+            )
         return state
+
+    @classmethod
+    def _compute_election_winner(
+        cls,
+        round_1_totals: dict[str, int],
+        round_2_totals: dict[str, int],
+    ) -> tuple[dict[str, int], str]:
+        slots = ["player_a", "player_b", "player_c"]
+        combined = {
+            slot: round_1_totals.get(slot, 0) + round_2_totals.get(slot, 0)
+            for slot in slots
+        }
+        winner_slot = sorted(
+            slots,
+            key=lambda s: (-combined[s], -round_2_totals.get(s, 0), s),
+        )[0]
+        return combined, winner_slot
+
+    @classmethod
+    async def submit_vote(
+        cls,
+        db: AsyncSession,
+        session_id: UUID,
+        voter_id: UUID,
+        target_slot_id: str,
+    ) -> VoteStatusPublic:
+        lock = cls.get_session_lock(session_id)
+        transitioned_to_round_2 = False
+        completed_result: Optional[ExperimentResultPublic] = None
+        next_state: Optional[SessionStateResponse] = None
+        ai_specs: list[AISpec] = []
+        duration = 60
+        cfg: Optional[ActiveExperimentConfig] = None
+
+        async with lock:
+            session = await cls.get_session(db, session_id)
+            round_number = cls.ensure_voting_phase(session)
+            cfg = load_active_config(condition_key=session.condition)
+            duration = cfg.experiment.discussion_duration_seconds
+
+            voter = next((p for p in session.participants if p.id == voter_id), None)
+            if not voter:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Voter does not belong to this session.",
+                )
+
+            target = next((p for p in session.participants if p.slot_id == target_slot_id), None)
+            if not target:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid vote target '{target_slot_id}'.",
+                )
+
+            if not cfg.voting.allow_self_vote and voter.id == target.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Self-voting is disabled for this experiment.",
+                )
+
+            existing = await db.execute(
+                select(Vote).where(
+                    Vote.session_id == session.id,
+                    Vote.voter_id == voter.id,
+                    Vote.round_number == round_number,
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="You have already submitted a vote for this round.",
+                )
+
+            vote = Vote(
+                session_id=session.id,
+                voter_id=voter.id,
+                target_id=target.id,
+                round_number=round_number,
+                created_at=utc_now(),
+            )
+            db.add(vote)
+            try:
+                await db.flush()
+            except IntegrityError as exc:
+                await db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Duplicate vote rejected.",
+                ) from exc
+
+            vote_status = await cls.get_vote_status(db, session, round_number)
+
+            if vote_status.votes_received == 3:
+                cls.cancel_ai_tasks(session_id)
+                if round_number == 1:
+                    cls._apply_transition(
+                        session,
+                        ExperimentPhase.ROUND_2_DISCUSSION.value,
+                        duration,
+                    )
+                    transitioned_to_round_2 = True
+                    ai_specs = cls._extract_ai_specs(session)
+                else:
+                    all_votes_res = await db.execute(
+                        select(Vote).where(Vote.session_id == session.id)
+                    )
+                    all_votes = all_votes_res.scalars().all()
+                    slot_by_id = {p.id: p.slot_id for p in session.participants}
+
+                    r1_totals = {"player_a": 0, "player_b": 0, "player_c": 0}
+                    r2_totals = {"player_a": 0, "player_b": 0, "player_c": 0}
+                    for v in all_votes:
+                        t_slot = slot_by_id.get(v.target_id)
+                        if t_slot:
+                            if v.round_number == 1:
+                                r1_totals[t_slot] += 1
+                            elif v.round_number == 2:
+                                r2_totals[t_slot] += 1
+
+                    combined, winner_slot = cls._compute_election_winner(r1_totals, r2_totals)
+                    winner_participant = next(
+                        p for p in session.participants if p.slot_id == winner_slot
+                    )
+                    cls._apply_transition(
+                        session,
+                        ExperimentPhase.COMPLETED.value,
+                        duration,
+                    )
+                    result_row = ExperimentResult(
+                        session_id=session.id,
+                        totals_json=combined,
+                        round_1_json=r1_totals,
+                        round_2_json=r2_totals,
+                        decision_maker_id=winner_participant.id,
+                        completed_at=session.completed_at or utc_now(),
+                    )
+                    db.add(result_row)
+                    await db.flush()
+                    completed_result = ExperimentResultPublic(
+                        session_id=session.id,
+                        totals_by_participant=combined,
+                        round_1_totals=r1_totals,
+                        round_2_totals=r2_totals,
+                        decision_maker_id=winner_slot,
+                        decision_maker_name=winner_participant.display_name,
+                        completed_at=result_row.completed_at,
+                    )
+
+            await db.commit()
+            await db.refresh(session)
+            if transitioned_to_round_2 or completed_result is not None:
+                next_state = await cls.build_session_state(db, session, cfg)
+
+        await ws_manager.broadcast_to_session(
+            session_id,
+            "vote_status",
+            vote_status.model_dump(mode="json"),
+        )
+
+        if transitioned_to_round_2 and next_state is not None and cfg is not None:
+            cls.schedule_discussion_timer(
+                session_id,
+                ExperimentPhase.ROUND_2_DISCUSSION.value,
+                duration,
+            )
+            cls.schedule_ai_discussion_tasks(
+                session_id,
+                ExperimentPhase.ROUND_2_DISCUSSION.value,
+                round_number=2,
+                ai_specs=ai_specs,
+                cfg=cfg,
+            )
+            await ws_manager.broadcast_to_session(
+                session_id,
+                "phase_changed",
+                {
+                    "phase": next_state.phase,
+                    "current_round": next_state.current_round,
+                    "round_ends_at": (
+                        next_state.round_ends_at.isoformat() if next_state.round_ends_at else None
+                    ),
+                },
+            )
+
+        if completed_result is not None:
+            await ws_manager.broadcast_to_session(
+                session_id,
+                "experiment_completed",
+                completed_result.model_dump(mode="json"),
+            )
+
+        return vote_status
 
     @classmethod
     async def authenticate_token(
