@@ -26,6 +26,8 @@ services:
       - "8000:8000"
     volumes:
       - ./config.yml:/app/config.yml:ro
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
     depends_on:
       db:
         condition: service_healthy

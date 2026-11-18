@@ -4,11 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import ActiveExperimentConfig, load_active_config
+from app.models import init_db
+from app.routes import router as experiment_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.config = load_active_config()
+    await init_db()
     yield
 
 
@@ -25,6 +28,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(experiment_router)
 
 
 @app.get("/health")
