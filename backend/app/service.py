@@ -5,8 +5,8 @@ from datetime import timedelta
 from typing import Optional
 from uuid import UUID
 
-from fastapi import HTTPException, status
-from sqlalchemy import desc, select
+from fastapi import HTTPException, WebSocket, status
+from sqlalchemy import asc, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import ActiveExperimentConfig, load_active_config
@@ -14,11 +14,13 @@ from app.models import (
     AsyncSessionLocal,
     ExperimentPhase,
     ExperimentSession,
+    Message,
     Participant,
     utc_now,
 )
 from app.schemas import (
     JoinSessionResponse,
+    MessagePublic,
     ParticipantPublic,
     SLOT_DISPLAY_NAMES,
     SessionStateResponse,
@@ -35,8 +37,43 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+class WebSocketManager:
+    """In-process WebSocket registry scoped by session_id."""
+
+    def __init__(self) -> None:
+        self._connections: dict[UUID, set[WebSocket]] = {}
+
+    async def connect(self, session_id: UUID, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self._connections.setdefault(session_id, set()).add(websocket)
+
+    def disconnect(self, session_id: UUID, websocket: WebSocket) -> None:
+        sockets = self._connections.get(session_id)
+        if sockets:
+            sockets.discard(websocket)
+            if not sockets:
+                self._connections.pop(session_id, None)
+
+    async def broadcast_to_session(self, session_id: UUID, event_type: str, payload: dict) -> None:
+        sockets = list(self._connections.get(session_id, set()))
+        if not sockets:
+            return
+        envelope = {"event": event_type, "payload": payload}
+        stale: list[WebSocket] = []
+        for ws in sockets:
+            try:
+                await ws.send_json(envelope)
+            except Exception:
+                stale.append(ws)
+        for ws in stale:
+            self.disconnect(session_id, ws)
+
+
+ws_manager = WebSocketManager()
+
+
 class ExperimentService:
-    """Core session lifecycle, slot assignment, token auth, timers, and state machine."""
+    """Core session lifecycle, slot assignment, token auth, messaging, timers, and state machine."""
 
     _session_locks: dict[UUID, asyncio.Lock] = {}
     _timer_tasks: dict[UUID, asyncio.Task] = {}
@@ -89,6 +126,17 @@ class ExperimentService:
             id=p.slot_id,
             display_name=p.display_name,
             is_connected=p.is_connected,
+        )
+
+    @staticmethod
+    def _to_public_message(msg: Message, participant: Participant) -> MessagePublic:
+        return MessagePublic(
+            id=msg.id,
+            sender_id=participant.slot_id,
+            sender_name=participant.display_name,
+            round_number=msg.round_number,
+            content=msg.content,
+            created_at=msg.created_at,
         )
 
     @classmethod
@@ -149,8 +197,28 @@ class ExperimentService:
             session.completed_at = now
 
     @classmethod
-    def build_session_state(
+    async def list_public_messages(
         cls,
+        db: AsyncSession,
+        session: ExperimentSession,
+    ) -> list[MessagePublic]:
+        participant_by_id = {p.id: p for p in session.participants}
+        result = await db.execute(
+            select(Message)
+            .where(Message.session_id == session.id)
+            .order_by(asc(Message.created_at))
+        )
+        messages = result.scalars().all()
+        return [
+            cls._to_public_message(m, participant_by_id[m.participant_id])
+            for m in messages
+            if m.participant_id in participant_by_id
+        ]
+
+    @classmethod
+    async def build_session_state(
+        cls,
+        db: AsyncSession,
         session: ExperimentSession,
         cfg: ActiveExperimentConfig,
     ) -> SessionStateResponse:
@@ -161,6 +229,7 @@ class ExperimentService:
             for p in ordered_participants
             if p.participant_type == "human" and p.token_hash is not None
         )
+        messages = await cls.list_public_messages(db, session)
         return SessionStateResponse(
             session_id=session.id,
             condition_key=session.condition,
@@ -172,6 +241,7 @@ class ExperimentService:
             participants=[cls._to_public_participant(p) for p in ordered_participants],
             required_humans=required_humans,
             joined_humans=joined_humans,
+            messages=messages,
         )
 
     @classmethod
@@ -300,7 +370,14 @@ class ExperimentService:
 
             await db.commit()
             await db.refresh(session)
-            state = cls.build_session_state(session, cfg)
+            state = await cls.build_session_state(db, session, cfg)
+            public_assigned = cls._to_public_participant(assigned)
+
+        await ws_manager.broadcast_to_session(
+            session.id,
+            "participant_joined",
+            public_assigned.model_dump(mode="json"),
+        )
 
         if started_round_1:
             cls.schedule_discussion_timer(
@@ -308,13 +385,63 @@ class ExperimentService:
                 ExperimentPhase.ROUND_1_DISCUSSION.value,
                 duration,
             )
+            await ws_manager.broadcast_to_session(
+                session.id,
+                "experiment_started",
+                {
+                    "phase": state.phase,
+                    "current_round": state.current_round,
+                    "round_ends_at": state.round_ends_at.isoformat() if state.round_ends_at else None,
+                },
+            )
 
         return JoinSessionResponse(
             session_id=session.id,
-            participant=cls._to_public_participant(assigned),
+            participant=public_assigned,
             participant_token=raw_token,
             session_state=state,
         )
+
+    @classmethod
+    async def add_message(
+        cls,
+        db: AsyncSession,
+        session_id: UUID,
+        participant_id: UUID,
+        content: str,
+        audit_metadata: Optional[dict] = None,
+    ) -> MessagePublic:
+        lock = cls.get_session_lock(session_id)
+        async with lock:
+            session = await cls.get_session(db, session_id)
+            round_number = cls.ensure_discussion_phase(session)
+
+            sender = next((p for p in session.participants if p.id == participant_id), None)
+            if not sender:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Participant does not belong to this session.",
+                )
+
+            msg = Message(
+                session_id=session.id,
+                participant_id=sender.id,
+                round_number=round_number,
+                content=content,
+                audit_metadata=audit_metadata,
+                created_at=utc_now(),
+            )
+            db.add(msg)
+            await db.commit()
+            await db.refresh(msg)
+            public_msg = cls._to_public_message(msg, sender)
+
+        await ws_manager.broadcast_to_session(
+            session_id,
+            "new_message",
+            public_msg.model_dump(mode="json"),
+        )
+        return public_msg
 
     @classmethod
     async def advance_discussion_if_active(
@@ -323,6 +450,8 @@ class ExperimentService:
         expected_phase: Optional[str] = None,
     ) -> Optional[SessionStateResponse]:
         lock = cls.get_session_lock(session_id)
+        state: Optional[SessionStateResponse] = None
+
         async with lock:
             async with AsyncSessionLocal() as db:
                 session = await cls.get_session(db, session_id)
@@ -348,7 +477,19 @@ class ExperimentService:
                 )
                 await db.commit()
                 await db.refresh(session)
-                return cls.build_session_state(session, cfg)
+                state = await cls.build_session_state(db, session, cfg)
+
+        if state is not None:
+            await ws_manager.broadcast_to_session(
+                session_id,
+                "phase_changed",
+                {
+                    "phase": state.phase,
+                    "current_round": state.current_round,
+                    "round_ends_at": state.round_ends_at.isoformat() if state.round_ends_at else None,
+                },
+            )
+        return state
 
     @classmethod
     async def authenticate_token(
@@ -376,3 +517,22 @@ class ExperimentService:
                 detail="Invalid participant token for this session.",
             )
         return participant
+
+    @classmethod
+    async def set_participant_connection(
+        cls,
+        session_id: UUID,
+        participant_id: UUID,
+        is_connected: bool,
+    ) -> None:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Participant).where(
+                    Participant.session_id == session_id,
+                    Participant.id == participant_id,
+                )
+            )
+            participant = result.scalar_one_or_none()
+            if participant:
+                participant.is_connected = is_connected
+                await db.commit()
