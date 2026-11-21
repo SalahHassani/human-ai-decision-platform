@@ -2,9 +2,9 @@ services:
   db:
     image: postgres:16-alpine
     environment:
+      POSTGRES_DB: ${POSTGRES_DB:-experiment_db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-experiment_db}
     ports:
       - "5433:5432"
     volumes:
@@ -13,24 +13,35 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-experiment_db}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    env_file:
+      - path: .env
+        required: false
     environment:
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/experiment_db}
-      EXPERIMENT_CONDITION: ${EXPERIMENT_CONDITION:-condition_2}
       CONFIG_PATH: /app/config.yml
-      AI_CONFIG_PATH: /app/config/ai_config.json
+      EXPERIMENT_CONDITION: ${EXPERIMENT_CONDITION:-condition_2}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      REAL_AI: ${REAL_AI:-false}
+      AI_1_PROVIDER: ${AI_1_PROVIDER:-gemini}
+      AI_1_MODEL: ${AI_1_MODEL:-gemini-2.5-flash}
+      AI_1_API_KEY: ${AI_1_API_KEY:-}
+      AI_2_PROVIDER: ${AI_2_PROVIDER:-gemini}
+      AI_2_MODEL: ${AI_2_MODEL:-gemini-2.5-flash}
+      AI_2_API_KEY: ${AI_2_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
       - ./config.yml:/app/config.yml:ro
       - ./config:/app/config:ro
-      - ./backend/app:/app/app
-      - ./backend/tests:/app/tests
     depends_on:
       db:
         condition: service_healthy
@@ -38,8 +49,11 @@ services:
   frontend:
     build:
       context: ./frontend
+      dockerfile: Dockerfile
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000}
+      VITE_ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
     ports:
       - "5173:5173"
     depends_on:
@@ -47,5 +61,3 @@ services:
 
 volumes:
   postgres_data:
-
-  

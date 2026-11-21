@@ -18,9 +18,12 @@ from app.ai_agent import (
     DiscussionMessageContext,
     PERSONALITY_ORDER,
     RuleBasedAIAgent,
+    build_llm_prompts,
     create_ai_agent,
+    validate_llm_candidate,
 )
 from app.config import ActiveExperimentConfig, load_active_config
+from app.llm_providers import LLMProviderError, create_llm_provider
 from app.models import (
     AsyncSessionLocal,
     ExperimentPhase,
@@ -99,6 +102,8 @@ class ExperimentService:
     _session_locks: dict[tuple[int, UUID], asyncio.Lock] = {}
     _timer_tasks: dict[UUID, asyncio.Task] = {}
     _ai_tasks: dict[UUID, list[asyncio.Task]] = {}
+    _session_fallback_state: dict[UUID, dict[str, dict]] = {}
+    _resolved_turns: set[tuple[UUID, str, int, int]] = set()
 
     @classmethod
     def get_session_lock(cls, session_id: UUID) -> asyncio.Lock:
@@ -144,7 +149,11 @@ class ExperimentService:
     @classmethod
     def cancel_timer(cls, session_id: UUID) -> None:
         task = cls._timer_tasks.pop(session_id, None)
-        if task and not task.done() and task is not asyncio.current_task():
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task and not task.done() and task is not current:
             task.cancel()
 
     @classmethod
@@ -165,6 +174,8 @@ class ExperimentService:
         for sid in list(cls._ai_tasks.keys()):
             cls.cancel_ai_tasks(sid)
         cls._session_locks.clear()
+        cls._session_fallback_state.clear()
+        cls._resolved_turns.clear()
 
     @classmethod
     def schedule_discussion_timer(
@@ -201,11 +212,14 @@ class ExperimentService:
         tasks: list[asyncio.Task] = []
         min_delay = cfg.ai.min_response_delay_seconds
         max_delay = cfg.ai.max_response_delay_seconds
-        max_msgs = min(cfg.ai.max_messages_per_round, ai_engine_cfg.discussion.max_messages_per_ai_per_round)
+        max_msgs = min(
+            cfg.ai.max_messages_per_round,
+            ai_engine_cfg.discussion.max_messages_per_ai_per_round,
+        )
         duration = cfg.experiment.discussion_duration_seconds
 
-        for ai_idx, (participant_id, slot_id, display_name, provider, model, personality) in enumerate(ai_specs):
-            agent = create_ai_agent(provider=provider, model=model, personality=personality)
+        for ai_idx, (participant_id, slot_id, display_name, _provider, _model, personality) in enumerate(ai_specs):
+            profile_key = "ai_1" if ai_idx == 0 else "ai_2"
 
             async def _ai_speaker_worker(
                 p_id: UUID = participant_id,
@@ -213,7 +227,7 @@ class ExperimentService:
                 d_name: str = display_name,
                 p_personality: str = personality,
                 stagger_idx: int = ai_idx,
-                ai_impl=agent,
+                p_profile_key: str = profile_key,
             ) -> None:
                 try:
                     cumulative_delay = 0.0
@@ -227,27 +241,34 @@ class ExperimentService:
 
                         await asyncio.sleep(delay)
 
+                        turn_key = (session_id, s_id, round_number, msg_idx)
                         lock = cls.get_session_lock(session_id)
-                        public_msg: Optional[MessagePublic] = None
 
+                        # Step 1: Under lock, capture authoritative mid-session snapshot
                         async with lock:
+                            if turn_key in cls._resolved_turns:
+                                return
                             async with AsyncSessionLocal() as db:
                                 session = await cls.get_session(db, session_id)
                                 if session.phase != expected_phase:
                                     return
 
-                                # Strict single-topic enforcement from locked session row
                                 locked_topic = TopicLoader.load_topic(session.selected_topic_id)
                                 public_msgs = await cls.list_public_messages(db, session)
-                                d_ctx = dict(session.discussion_context_json or default_discussion_context())
+                                d_ctx = dict(
+                                    session.discussion_context_json or default_discussion_context()
+                                )
+                                participant_slots = sorted(
+                                    p.slot_id for p in session.participants
+                                )
 
-                                ctx = AgentDecisionContext(
+                                snapshot_ctx = AgentDecisionContext(
                                     session_id=str(session_id),
                                     self_slot_id=s_id,
                                     self_display_name=d_name,
                                     round_number=round_number,
                                     message_index=msg_idx,
-                                    participant_slots=sorted(p.slot_id for p in session.participants),
+                                    participant_slots=participant_slots,
                                     messages=[
                                         DiscussionMessageContext(
                                             sender_id=m.sender_id,
@@ -262,75 +283,185 @@ class ExperimentService:
                                     discussion_context=d_ctx,
                                 )
 
-                                if isinstance(ai_impl, RuleBasedAIAgent):
-                                    outcome = ai_impl.generate_turn_with_state(ctx)
-                                    reply_text = outcome.content
+                        # Step 2: Try real LLM outside the session lock (if enabled and not fallen back)
+                        sess_fb = cls._session_fallback_state.setdefault(session_id, {})
+                        slot_fb = sess_fb.get(
+                            s_id, {"fallback_triggered": False, "fallback_reason": None}
+                        )
+                        profile = cfg.ai.participants.get(p_profile_key)
 
-                                    introduced = list(d_ctx.get("introduced_arguments", []))
-                                    if outcome.argument_id and outcome.argument_id not in introduced:
-                                        introduced.append(outcome.argument_id)
+                        outcome = None
+                        actual_engine = "rule_based"
+                        used_provider = "rule_based"
+                        used_model = "deterministic-v1"
+                        fallback_reason: Optional[str] = slot_fb.get("fallback_reason")
 
-                                    asked = list(d_ctx.get("asked_questions", []))
-                                    if outcome.question_id and outcome.question_id not in asked:
-                                        asked.append(outcome.question_id)
+                        should_try_llm = (
+                            cfg.ai.real_ai
+                            and profile is not None
+                            and profile.enabled
+                            and not slot_fb.get("fallback_triggered", False)
+                        )
 
-                                    used_strats = list(d_ctx.get("used_strategies", []))
-                                    used_strats.append(
-                                        {
-                                            "slot_id": s_id,
-                                            "round": round_number,
-                                            "strategy": outcome.strategy,
-                                        }
+                        if should_try_llm and profile is not None:
+                            api_key = profile.resolve_api_key()
+                            timeout_sec = cfg.ai.fallback.timeout_seconds
+                            try:
+                                if not api_key:
+                                    raise LLMProviderError(
+                                        "missing_key", f"Missing {profile.api_key_env}."
                                     )
+                                llm_provider = create_llm_provider(
+                                    provider=profile.provider,
+                                    api_key=api_key,
+                                    model=profile.model,
+                                )
+                                sys_prompt, usr_prompt = build_llm_prompts(snapshot_ctx)
+                                llm_res = await asyncio.wait_for(
+                                    llm_provider.generate_response(
+                                        system_prompt=sys_prompt,
+                                        user_prompt=usr_prompt,
+                                        timeout_seconds=timeout_sec,
+                                    ),
+                                    timeout=timeout_sec + 0.5,
+                                )
+                                outcome = validate_llm_candidate(
+                                    context=snapshot_ctx,
+                                    message=llm_res.message,
+                                    strategy=llm_res.strategy,
+                                    referenced_arguments=llm_res.referenced_arguments,
+                                    new_arguments=llm_res.new_arguments,
+                                )
+                                actual_engine = "llm"
+                                used_provider = llm_res.provider
+                                used_model = llm_res.model
+                            except asyncio.TimeoutError:
+                                fallback_reason = "request_timeout"
+                            except LLMProviderError as exc:
+                                fallback_reason = exc.category
+                            except Exception:
+                                fallback_reason = "invalid_response"
 
-                                    positions = dict(d_ctx.get("participant_positions", {}))
-                                    if outcome.stance_option:
-                                        positions[s_id] = outcome.stance_option
+                        # Step 3: Re-acquire lock; fall back to rule-based from live mid-session state if needed
+                        public_msg: Optional[MessagePublic] = None
+                        async with lock:
+                            if turn_key in cls._resolved_turns:
+                                return
 
-                                    session.discussion_context_json = {
-                                        "introduced_arguments": introduced,
-                                        "asked_questions": asked,
-                                        "participant_positions": positions,
-                                        "used_strategies": used_strats,
-                                    }
-                                    audit = {
-                                        "provider": ai_impl.provider,
-                                        "model": ai_impl.model,
-                                        "topic_id": locked_topic.topic_id,
-                                        "personality": p_personality,
-                                        "strategy": outcome.strategy,
-                                        "argument_id": outcome.argument_id,
-                                        "question_id": outcome.question_id,
-                                        "compromise_id": outcome.compromise_id,
-                                        "delay_seconds": round(delay, 2),
-                                        "message_index": msg_idx,
-                                    }
-                                else:
-                                    reply_text = await ai_impl.generate_response(ctx)
-                                    audit = {
-                                        "provider": ai_impl.provider,
-                                        "model": ai_impl.model,
-                                        "topic_id": locked_topic.topic_id,
-                                        "personality": p_personality,
-                                        "delay_seconds": round(delay, 2),
-                                        "message_index": msg_idx,
-                                    }
+                            async with AsyncSessionLocal() as db:
+                                session = await cls.get_session(db, session_id)
+                                if session.phase != expected_phase:
+                                    return
 
-                                sender = next((p for p in session.participants if p.id == p_id), None)
+                                sender = next(
+                                    (p for p in session.participants if p.id == p_id), None
+                                )
                                 if not sender:
                                     return
+
+                                locked_topic = TopicLoader.load_topic(session.selected_topic_id)
+                                d_ctx = dict(
+                                    session.discussion_context_json or default_discussion_context()
+                                )
+
+                                if outcome is None:
+                                    if (
+                                        should_try_llm
+                                        and cfg.ai.fallback.switch_for_remainder_of_session
+                                    ):
+                                        cls._session_fallback_state.setdefault(session_id, {})[
+                                            s_id
+                                        ] = {
+                                            "fallback_triggered": True,
+                                            "fallback_reason": fallback_reason or "fallback",
+                                        }
+
+                                    live_msgs = await cls.list_public_messages(db, session)
+                                    live_ctx = AgentDecisionContext(
+                                        session_id=str(session_id),
+                                        self_slot_id=s_id,
+                                        self_display_name=d_name,
+                                        round_number=round_number,
+                                        message_index=msg_idx,
+                                        participant_slots=sorted(
+                                            p.slot_id for p in session.participants
+                                        ),
+                                        messages=[
+                                            DiscussionMessageContext(
+                                                sender_id=m.sender_id,
+                                                sender_name=m.sender_name,
+                                                round_number=m.round_number,
+                                                content=m.content,
+                                            )
+                                            for m in live_msgs
+                                        ],
+                                        topic=locked_topic,
+                                        personality=p_personality,
+                                        discussion_context=d_ctx,
+                                    )
+                                    rb_agent = RuleBasedAIAgent(personality=p_personality)
+                                    outcome = rb_agent.generate_turn_with_state(live_ctx)
+                                    actual_engine = "rule_based"
+                                    used_provider = "rule_based"
+                                    used_model = "deterministic-v1"
+
+                                introduced = list(d_ctx.get("introduced_arguments", []))
+                                if outcome.argument_id and outcome.argument_id not in introduced:
+                                    introduced.append(outcome.argument_id)
+
+                                asked = list(d_ctx.get("asked_questions", []))
+                                if outcome.question_id and outcome.question_id not in asked:
+                                    asked.append(outcome.question_id)
+
+                                used_strats = list(d_ctx.get("used_strategies", []))
+                                used_strats.append(
+                                    {
+                                        "slot_id": s_id,
+                                        "round": round_number,
+                                        "strategy": outcome.strategy,
+                                        "engine": actual_engine,
+                                    }
+                                )
+
+                                positions = dict(d_ctx.get("participant_positions", {}))
+                                if outcome.stance_option:
+                                    positions[s_id] = outcome.stance_option
+
+                                session.discussion_context_json = {
+                                    "introduced_arguments": introduced,
+                                    "asked_questions": asked,
+                                    "participant_positions": positions,
+                                    "used_strategies": used_strats,
+                                }
+                                audit = {
+                                    "engine": actual_engine,
+                                    "provider": used_provider,
+                                    "model": used_model,
+                                    "topic_id": locked_topic.topic_id,
+                                    "personality": p_personality,
+                                    "strategy": outcome.strategy,
+                                    "argument_id": outcome.argument_id,
+                                    "question_id": outcome.question_id,
+                                    "compromise_id": outcome.compromise_id,
+                                    "fallback_reason": (
+                                        fallback_reason if actual_engine == "rule_based" else None
+                                    ),
+                                    "delay_seconds": round(delay, 2),
+                                    "message_index": msg_idx,
+                                }
 
                                 msg = Message(
                                     session_id=session.id,
                                     participant_id=sender.id,
                                     round_number=round_number,
-                                    content=reply_text,
+                                    content=outcome.content,
                                     audit_metadata=audit,
                                     created_at=utc_now(),
                                 )
                                 db.add(msg)
                                 await db.commit()
                                 await db.refresh(msg)
+                                cls._resolved_turns.add(turn_key)
                                 public_msg = cls._to_public_message(msg, sender)
 
                         if public_msg is not None:

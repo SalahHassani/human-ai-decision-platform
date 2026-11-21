@@ -2,6 +2,8 @@
 
 A reproducible, real-time web application for running a 3-participant group decision-making experiment across configurable human/AI compositions (**3 Humans**, **2 Humans + 1 AI**, or **1 Human + 2 AI**) and **10 structured workplace decision scenarios**. Participants interact under neutral identifiers (**Player A**, **Player B**, **Player C**) around a single **immutably locked discussion topic** across two timed discussion rounds and two blind voting rounds to elect a single **Decision Maker**.
 
+The platform supports both **live LLM-powered AI agents** (Google Gemini and OpenAI-compatible endpoints) with **automatic mid-session rule-based fallback** and an **offline deterministic rule-based mode** (`REAL_AI=false`) for reproducible local testing and evaluation.
+
 ---
 
 ## 1. Quick Start (Installation & Running from Scratch)
@@ -9,6 +11,7 @@ A reproducible, real-time web application for running a 3-participant group deci
 ### Prerequisites
 - **Docker** & **Docker Compose**
 - **Git**
+- A **Google AI Studio** API key (or OpenAI-compatible API key) if enabling live LLM mode (`REAL_AI=true`)
 
 ### Step-by-Step Startup
 1. **Clone the repository**:
@@ -17,11 +20,11 @@ A reproducible, real-time web application for running a 3-participant group deci
    cd human-ai-decision-platform
    ```
 
-2. **Create local environment file (optional)**:
+2. **Create local environment file**:
    ```bash
    cp .env.example .env
    ```
-   *(All services run out-of-the-box with sensible defaults even without creating `.env`.)*
+   *(All services can also run offline out-of-the-box with sensible defaults—`REAL_AI=false` uses the deterministic rule-based engine without requiring API keys.)*
 
 3. **Build and start all containers**:
    ```bash
@@ -40,13 +43,45 @@ A reproducible, real-time web application for running a 3-participant group deci
 | :--- | :--- | :--- | :--- | :--- |
 | **Frontend** (`React` + `Vite`) | `5173` | `5173` | HTTP | Participant web interface (`http://localhost:5173`) |
 | **Backend** (`FastAPI` + `Uvicorn`) | `8000` | `8000` | HTTP / WS | REST API & WebSocket server (`ws://localhost:8000`) |
-| **Database** (`PostgreSQL 16`) | `5432` | `5433` | TCP | Persistent session, locked topic, participant, message, vote, and result storage *(mapped to `5433` on host to prevent conflicts with any local Postgres instance)* |
+| **Database** (`PostgreSQL 16`) | `5432` | `5433` | TCP | Persistent session, locked topic, participant, message, vote, audit metadata, and result storage *(mapped to `5433` on host to prevent conflicts with any local Postgres instance)* |
 
 ---
 
-## 2. Configuration, Scenarios & Topic Locking (`config.yml`, `config/ai_config.json` & `.env`)
+## 2. Configuration, Live LLM Providers & Topic Locking (`config.yml`, `config/ai_config.json` & `.env`)
 
-Experiment rules live in `config.yml` (validated via Pydantic in `backend/app/config.py`), while all scenario definitions, AI personalities, strategies, and validation rules live in `config/ai_config.json` (validated via `backend/app/topic_loader.py`).
+Experiment rules live in `config.yml` (validated via Pydantic in `backend/app/config.py`), scenario definitions and rule-based AI strategies live in `config/ai_config.json` (validated via `backend/app/topic_loader.py`), and live LLM provider wiring lives in `backend/app/llm_providers.py` and `backend/app/ai_agent.py`.
+
+### Enabling Live LLM Agents (Gemini & OpenAI-Compatible Endpoints)
+To use live LLM responses instead of pure rule-based templates, configure your provider base URLs, models, and API keys at the top layer in `.env`:
+
+```env
+# Enable live LLM calls (false = deterministic rule-based offline mode)
+REAL_AI=true
+
+# Top-layer provider base URLs (no hardcoded URLs inside provider methods)
+GEMINI_BASE_URL=[https://generativelanguage.googleapis.com/v1beta](https://generativelanguage.googleapis.com/v1beta)
+OPENAI_BASE_URL=[https://api.openai.com/v1](https://api.openai.com/v1)
+
+# AI Participant 1 (analytical persona)
+AI_1_PROVIDER=gemini
+AI_1_MODEL=gemini-flash-lite-latest
+AI_1_API_KEY=your_gemini_api_key_here
+
+# AI Participant 2 (cooperative persona)
+AI_2_PROVIDER=gemini
+AI_2_MODEL=gemini-flash-lite-latest
+AI_2_API_KEY=your_gemini_api_key_here
+```
+
+> **Important Configuration Rules:**
+> - **Keep `api_key_env` as an env var name**: In `config.yml`, `api_key_env` must stay `"AI_1_API_KEY"` and `"AI_2_API_KEY"` so `resolve_api_key()` reads your secret from the environment rather than treating the key string itself as an env var name.
+> - **Model & Flash-Lite compatibility**: Flash-Lite models (`gemini-flash-lite-latest`, `gemini-3.5-flash-lite`) do not accept `thinkingConfig` in `generationConfig` and return structured JSON cleanly without it.
+> - **Rebuild vs. Recreate**: After changing `.env` values, run `docker compose up -d --force-recreate backend`. After changing Python code in `backend/app/`, run `docker compose up -d --build --force-recreate backend`.
+
+### Automatic Mid-Session Rule-Based Fallback & Audit Logging
+- **Normalized Error Classification (`LLMProviderError`)**: Captures `missing_key`, `auth_error`, `model_unavailable`, `rate_limited`, `timeout`, `server_error`, and `invalid_response`.
+- **Graceful Fallback**: When configured (`ai.fallback.enabled: true`), transient errors can retry (`retry_attempts`) and automatically fall back to `RuleBasedAIAgent` so sessions never stall due to upstream rate limits, quotas, or network hiccups.
+- **Per-Message Audit Metadata**: Every persisted message records `audit_metadata` in PostgreSQL (`engine`, `provider`, `model`, `latency_ms`, `strategy`, `referenced_arguments`, `new_arguments`, and `fallback_reason` when fallback occurs).
 
 ### Single Shared Topic & Immutable Topic Locking
 - **10 Built-in Decision Scenarios (`config/ai_config.json`)**: Includes `remote_work_policy`, `meeting_scheduling`, `project_deadline`, `budget_allocation`, `team_leadership`, `hiring_decision`, `product_launch`, `workplace_conflict`, `technology_selection`, and `sustainability_decision`.
@@ -109,8 +144,9 @@ Experiment rules live in `config.yml` (validated via Pydantic in `backend/app/co
 |                   FastAPI Modular Monolith (:8000)                |
 |  - Server-Authoritative State Machine (per-session asyncio.Lock)  |
 |  - Immutable Topic Loader & Cross-Topic Isolation Guard           |
+|  - LLM Provider Layer (Gemini / OpenAI) + RuleBased Fallback      |
 |  - Public DTO Isolation (strips AI type, personality & tokens)    |
-|  - Background Round Timers & 17-Strategy RuleBasedAIAgent Tasks   |
+|  - Background Round Timers & AI/Rule-Based Task Scheduler         |
 |  - Admin-Protected Controls & CSV Research Export                 |
 +---------------------------------+---------------------------------+
                                   | SQLAlchemy Async (asyncpg)
@@ -136,10 +172,11 @@ human-ai-decision-platform/
 │   │   ├── main.py                 # FastAPI app initialization & lifespan startup
 │   │   ├── config.py               # Pydantic validation for config.yml & env vars
 │   │   ├── topic_loader.py         # Strict scenario loader & AI config validation (no fallback)
-│   │   ├── models.py               # SQLAlchemy async ORM schema (with locked topic & context)
+│   │   ├── llm_providers.py        # Provider-agnostic Gemini & OpenAI clients + registry
+│   │   ├── models.py               # SQLAlchemy async ORM schema (with locked topic & audit JSON)
 │   │   ├── schemas.py              # Blind public DTOs & request/response models
 │   │   ├── service.py              # State machine, topic lock, timers, voting, WS, CSV export
-│   │   ├── ai_agent.py             # Extensible AIAgent & 17-strategy humanized RuleBasedAIAgent
+│   │   ├── ai_agent.py             # LLM-backed agent, fallback & 17-strategy RuleBasedAIAgent
 │   │   └── routes.py               # REST & WebSocket endpoints + admin auth guard
 │   └── tests/
 │       ├── test_experiment.py      # 10 core state machine, WebSocket, timer & CSV tests
@@ -171,16 +208,44 @@ human-ai-decision-platform/
 - **Milestone 5 — Blind Voting & Tie-Breaking**: Single-vote-per-round constraint, hidden intermediate tallies, and deterministic winner resolution.
 - **Milestone 6 — React Experiment UI**: Lobby topic/condition setup, locked scenario display across all phases, synchronized countdown timer, reconnect snapshot resync, self-vote exclusion in UI, and results view.
 - **Milestone 7 — Hardening, Verification & CSV Export**: Admin token guards on demo/export controls, WebSocket reconnect tests, topic-tagged CSV research export, and 22 passing `pytest` tests.
+- **Milestone 8 — Configurable Live LLM Providers & Auditability**: Added `llm_providers.py` with top-layer base URLs (`GEMINI_BASE_URL`, `OPENAI_BASE_URL`), structured JSON output parsing, normalized error fallback to `RuleBasedAIAgent`, and per-message `audit_metadata` persistence.
 
 ### Key Design Decisions & Intentional Trade-Offs
-- **Offline `RuleBasedAIAgent` behind an Extensible `AIAgent` Interface**: Allows evaluators to run the full platform immediately offline with zero external API keys, deterministic testability, and zero rate-limit variance. Every AI message uses natural conversational phrasing across 17 strategies while enforcing word bounds (`12–75` words) and cross-topic isolation. Live LLM providers can be added by implementing `generate_response()` and `cast_vote()` in `backend/app/ai_agent.py`.
+- **Configurable Live LLM Providers + Automatic Rule-Based Fallback**: Supports live Gemini and OpenAI-compatible models when `REAL_AI=true` while falling back seamlessly to deterministic `RuleBasedAIAgent` on provider/network/quota failures and running completely offline when `REAL_AI=false`. Every AI message enforces word bounds (`12–75` words) and cross-topic isolation.
 - **Immutable Topic Lock with Zero Fallback**: Prevents mid-session topic drift or cross-topic contamination; invalid topic IDs fail explicitly (`400`) and mid-session topic mutation requests are rejected (`409`).
 - **Deterministic Voting & Tie-Breaking**: Combined Round 1 + Round 2 votes determine the winner; ties break first by **Round 2 votes** (capturing post-deliberation consensus) and then **alphabetical slot order** (`player_a` < `player_b` < `player_c`).
 - **Known Limitations (Single-Process Scope)**: WebSocket connections (`WebSocketManager`) and background timer/AI `asyncio.Task` registries are stored in-memory within the single FastAPI worker process rather than Redis pub/sub, keeping deployment self-contained in 3 containers.
 
 ---
 
-## 6. API & WebSocket Reference
+## 6. Runtime Verification & Diagnostics
+
+### Verify Active Runtime Config (`REAL_AI`, Provider & API Key Resolution)
+```bash
+docker compose exec backend python -c "from app.config import load_active_config; c = load_active_config(); print('real_ai:', c.ai.real_ai, '| ai_1:', c.ai.participants['ai_1'].provider, bool(c.ai.participants['ai_1'].resolve_api_key()), '| ai_2:', c.ai.participants['ai_2'].provider, bool(c.ai.participants['ai_2'].resolve_api_key()))"
+```
+
+### Inspect Message Audit Metadata in PostgreSQL
+Confirm whether recent AI messages were generated by the live LLM (`'engine': 'llm'`) or triggered fallback (`'fallback_reason'`):
+```bash
+docker compose exec backend python -c "
+import asyncio
+from sqlalchemy import select, desc
+from app.models import AsyncSessionLocal, Message
+
+async def check():
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Message).order_by(desc(Message.id)).limit(6))
+        for m in res.scalars():
+            print(m.round_number, m.content[:45], '->', m.audit_metadata)
+
+asyncio.run(check())
+"
+```
+
+---
+
+## 7. API & WebSocket Reference
 
 | Method | Endpoint | Auth | Description |
 | :--- | :--- | :--- | :--- |
@@ -201,7 +266,7 @@ human-ai-decision-platform/
 
 ---
 
-## 7. Running Automated Tests
+## 8. Running Automated Tests
 
 Run the full **22-test** integration and unit suite inside the backend container:
 

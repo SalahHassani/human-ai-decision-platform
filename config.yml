@@ -25,12 +25,33 @@ conditions:
       - { id: player_c, type: ai, provider: rule_based, model: deterministic-v1 }
 
 ai:
+  enabled: true
+  real_ai: false
+  provider: "rule_based"
+  model: "deterministic-v1"
   min_response_delay_seconds: 4
   max_response_delay_seconds: 14
   max_messages_per_round: 2
+  participants:
+    ai_1:
+      enabled: true
+      provider: "gemini"
+      model: "gemini-3.8-flash"
+      api_key_env: "AI_1_API_KEY"
+      personality: "analytical"
+    ai_2:
+      enabled: true
+      provider: "gemini"
+      model: "gemini-3.8-flash"
+      api_key_env: "AI_2_API_KEY"
+      personality: "cooperative"
+  fallback:
+    enabled: true
+    engine: "rule_based"
+    timeout_seconds: 30.0
+    retry_attempts: 1
+    switch_for_remainder_of_session: true
 
 voting:
   allow_self_vote: false
   tie_break: [round_2_votes, alphabetical_order]
-
-  

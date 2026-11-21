@@ -627,3 +627,116 @@ def create_ai_agent(
         f"AI provider '{provider}' is not enabled in this offline assessment build. "
         "Use 'rule_based' in config.yml."
     )
+
+
+
+
+def build_llm_prompts(context: AgentDecisionContext) -> tuple[str, str]:
+    cfg = get_ai_config()
+    if context.topic is None:
+        raise ValueError("AgentDecisionContext must provide a locked TopicScenario.")
+    topic = TopicLoader.load_topic(context.topic.topic_id)
+    p_name = context.personality if context.personality in cfg.personalities else "analytical"
+    p_cfg = cfg.personalities[p_name]
+    round_cfg = cfg.round_behavior.get(f"round_{context.round_number}") or cfg.round_behavior["round_1"]
+
+    d_ctx = context.discussion_context or {}
+    introduced = list(d_ctx.get("introduced_arguments", []))
+    asked = list(d_ctx.get("asked_questions", []))
+
+    options_str = ", ".join(f"{o.id} ({o.label})" for o in topic.options)
+    arg_catalog = "\n".join(
+        f"- {a.argument_id} [{a.category}]: {a.idea}" for a in topic.arguments
+    )
+    q_catalog = "\n".join(
+        f"- {q.question_id}: {q.text}" for q in topic.questions
+    )
+
+    history_lines = []
+    for m in context.messages[-16:]:
+        history_lines.append(f"[Round {m.round_number}] {m.sender_name}: {m.content}")
+    history_block = "\n".join(history_lines) if history_lines else "(No messages posted yet.)"
+
+    system_prompt = (
+        f"You are {context.self_display_name}, a human-like participant in a 3-person group discussion "
+        f"(Player A, Player B, Player C). Never reveal or hint that you are an AI, language model, or bot.\n"
+        f"Behavioral tendency ({p_name}): {p_cfg.description} "
+        f"Style: {', '.join(p_cfg.communication_style)}. These are tendencies, not rigid stances—you may agree, "
+        f"disagree, ask questions, or compromise naturally.\n"
+        f"Strict rules:\n"
+        f"1. Discuss ONLY the locked topic below. Never switch topics.\n"
+        f"2. Write naturally like a real teammate in a fast-paced chat ({cfg.discussion.min_response_words} to "
+        f"{cfg.discussion.max_response_words} words). Avoid robotic headers or repeating the topic title unnecessarily.\n"
+        f"3. Do not repeat arguments already introduced ({introduced or 'none'}) or questions already asked ({asked or 'none'}).\n"
+        f"4. Return ONLY valid JSON with keys: "
+        f'{{"message": string, "strategy": string, "referenced_arguments": [string], "new_arguments": [string]}}.\n'
+        f"Allowed strategy values: {list(cfg.strategies.keys())}."
+    )
+
+    user_prompt = (
+        f"Locked Topic: {topic.title}\n"
+        f"Scenario: {topic.description}\n"
+        f"Main Question: {topic.main_question}\n"
+        f"Options: {options_str}\n"
+        f"Current Phase: Round {context.round_number} ({round_cfg.name}) — {round_cfg.objective}\n"
+        f"{'You MUST build on or reference what happened in Round 1.' if context.round_number == 2 else ''}\n\n"
+        f"Available Topic Arguments:\n{arg_catalog}\n\n"
+        f"Available Follow-up Questions:\n{q_catalog}\n\n"
+        f"Conversation History So Far:\n{history_block}\n\n"
+        f"Generate {context.self_display_name}'s next concise message as JSON:"
+    )
+    return system_prompt, user_prompt
+
+
+def validate_llm_candidate(
+    context: AgentDecisionContext,
+    message: str,
+    strategy: Optional[str],
+    referenced_arguments: list[str],
+    new_arguments: list[str],
+) -> GeneratedTurnOutcome:
+    cfg = get_ai_config()
+    if context.topic is None:
+        raise ValueError("Missing locked topic.")
+    topic = TopicLoader.load_topic(context.topic.topic_id)
+
+    cleaned = " ".join(message.strip().split())
+    if not cleaned:
+        raise ValueError("Empty LLM message.")
+
+    words = cleaned.split()
+    if len(words) < cfg.discussion.min_response_words or len(words) > cfg.discussion.max_response_words:
+        raise ValueError(
+            f"LLM message length ({len(words)} words) outside [{cfg.discussion.min_response_words}, {cfg.discussion.max_response_words}]."
+        )
+
+    lower_text = cleaned.lower()
+    prohibited_phrases = ("as an ai", "language model", "artificial intelligence", "i am an ai", "i'm an ai")
+    if any(p in lower_text for p in prohibited_phrases):
+        raise ValueError("LLM disclosed AI identity.")
+
+    for other_id, other_topic in cfg.topics.items():
+        if other_id == topic.topic_id:
+            continue
+        other_title = other_topic.title.lower()
+        if other_title != topic.title.lower() and other_title in lower_text:
+            raise ValueError(f"Cross-topic contamination: '{other_title}'.")
+
+    valid_arg_ids = {a.argument_id for a in topic.arguments}
+    d_ctx = context.discussion_context or {}
+    introduced_set = set(d_ctx.get("introduced_arguments", []))
+
+    chosen_strategy = strategy if (strategy and strategy in cfg.strategies) else "build_on_idea"
+
+    new_arg_id: Optional[str] = None
+    for aid in new_arguments:
+        if aid in valid_arg_ids and aid not in introduced_set:
+            new_arg_id = aid
+            break
+
+    return GeneratedTurnOutcome(
+        content=cleaned,
+        strategy=chosen_strategy,
+        personality=context.personality,
+        argument_id=new_arg_id,
+    )
