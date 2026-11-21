@@ -13,7 +13,7 @@ A reproducible, real-time web application for running a 3-participant group deci
 ### Step-by-Step Startup
 1. **Clone the repository**:
    ```bash
-   git clone [https://github.com/SalahHassani/human-ai-decision-platform.git](https://github.com/SalahHassani/human-ai-decision-platform.git)
+   git clone https://github.com/SalahHassani/human-ai-decision-platform.git
    cd human-ai-decision-platform
    ```
 
