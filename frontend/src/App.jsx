@@ -4,6 +4,7 @@ import {
   getActiveSession,
   getSessionState,
   joinSession,
+  listTopics,
   resetActiveSession,
   sendMessage,
   submitVote,
@@ -18,6 +19,8 @@ const STORAGE_KEY = 'chm_experiment_auth_v1'
 
 export default function App() {
   const [sessionState, setSessionState] = useState(null)
+  const [topics, setTopics] = useState([])
+  const [selectedTopicId, setSelectedTopicId] = useState('remote_work_policy')
   const [auth, setAuth] = useState(() => {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY)
@@ -46,8 +49,17 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      const active = await getActiveSession()
+      const [active, availableTopics] = await Promise.all([
+        getActiveSession(),
+        listTopics().catch(() => []),
+      ])
       setSessionState(active)
+      if (active?.selected_topic_id) {
+        setSelectedTopicId(active.selected_topic_id)
+      }
+      if (availableTopics.length > 0) {
+        setTopics(availableTopics)
+      }
       if (auth && auth.sessionId !== active.session_id) {
         saveAuth(null)
       }
@@ -142,12 +154,18 @@ export default function App() {
     }
   }
 
-  const handleReset = async (conditionKey = null) => {
+  const handleReset = async (conditionKey = null, topicId = null) => {
     setError(null)
     try {
-      const next = await resetActiveSession(conditionKey)
+      const next = await resetActiveSession(
+        conditionKey || sessionState?.condition_key,
+        topicId || selectedTopicId
+      )
       saveAuth(null)
       setSessionState(next)
+      if (next?.selected_topic_id) {
+        setSelectedTopicId(next.selected_topic_id)
+      }
     } catch (err) {
       setError(err.message)
     }
@@ -169,6 +187,9 @@ export default function App() {
   const isVoting =
     sessionState?.phase === 'ROUND_1_VOTING' || sessionState?.phase === 'ROUND_2_VOTING'
 
+  const previewTopic =
+    topics.find((t) => t.topic_id === selectedTopicId) || sessionState?.selected_topic
+
   return (
     <div
       style={{
@@ -177,6 +198,7 @@ export default function App() {
         fontFamily: 'system-ui, -apple-system, sans-serif',
         color: '#111827',
         padding: '24px 16px',
+        boxSizing: 'border-box',
       }}
     >
       <div style={{ maxWidth: 760, margin: '0 auto' }}>
@@ -186,6 +208,8 @@ export default function App() {
             justifyContent: 'space-between',
             alignItems: 'center',
             marginBottom: 20,
+            gap: 12,
+            flexWrap: 'wrap',
           }}
         >
           <div>
@@ -205,7 +229,7 @@ export default function App() {
             )}
             <button
               type="button"
-              onClick={() => handleReset(sessionState?.condition_key)}
+              onClick={() => handleReset(sessionState?.condition_key, sessionState?.selected_topic_id)}
               style={secondaryBtnStyle}
             >
               Reset Session
@@ -239,13 +263,44 @@ export default function App() {
               borderRadius: 10,
               padding: 28,
               textAlign: 'center',
+              boxSizing: 'border-box',
+              overflow: 'hidden',
             }}
           >
             <h2 style={{ marginTop: 0 }}>Join Experiment Session</h2>
-            <p style={{ color: '#4b5563', maxWidth: 500, margin: '8px auto 20px' }}>
+            <p style={{ color: '#4b5563', maxWidth: 520, margin: '8px auto 18px' }}>
               You will be assigned a neutral identifier (Player A, Player B, or Player C).
-              Participate in two 1-minute discussion rounds and vote for the group&apos;s Decision Maker.
+              Discuss the locked scenario across two 1-minute rounds and vote for the Decision Maker.
             </p>
+
+            {sessionState.selected_topic && (
+              <div
+                style={{
+                  textAlign: 'left',
+                  maxWidth: 560,
+                  margin: '0 auto 20px',
+                  padding: 14,
+                  borderRadius: 8,
+                  background: '#f8fafc',
+                  border: '1px solid #cbd5e1',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', textTransform: 'uppercase' }}>
+                  Active Session Topic (Locked)
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>
+                  {sessionState.selected_topic.title}
+                </div>
+                <div style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>
+                  {sessionState.selected_topic.description}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', marginTop: 6 }}>
+                  Question: {sessionState.selected_topic.main_question}
+                </div>
+              </div>
+            )}
+
             <button type="button" onClick={handleJoin} style={primaryBtnStyle}>
               Join Active Session ({sessionState.joined_humans}/{sessionState.required_humans} Humans Joined)
             </button>
@@ -253,38 +308,102 @@ export default function App() {
             <div
               style={{
                 marginTop: 28,
-                paddingTop: 16,
+                paddingTop: 18,
                 borderTop: '1px solid #e5e7eb',
-                fontSize: 13,
-                color: '#6b7280',
+                textAlign: 'left',
+                maxWidth: 560,
+                marginLeft: 'auto',
+                marginRight: 'auto',
+                boxSizing: 'border-box',
               }}
             >
-              <span>Switch Condition (Demo): </span>
-              {['condition_1', 'condition_2', 'condition_3'].map((cKey) => (
-                <button
-                  key={cKey}
-                  type="button"
-                  onClick={() => handleReset(cKey)}
-                  style={{
-                    marginLeft: 6,
-                    padding: '4px 10px',
-                    borderRadius: 6,
-                    border:
-                      sessionState.condition_key === cKey
-                        ? '1px solid #2563eb'
-                        : '1px solid #d1d5db',
-                    background: sessionState.condition_key === cKey ? '#eff6ff' : '#ffffff',
-                    cursor: 'pointer',
-                    fontSize: 12,
-                  }}
-                >
-                  {cKey === 'condition_1'
-                    ? '3 Humans'
-                    : cKey === 'condition_2'
-                    ? '2 Humans + 1 AI'
-                    : '1 Human + 2 AI'}
-                </button>
-              ))}
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+                New Session Setup (Condition &amp; Locked Discussion Topic)
+              </div>
+
+              {topics.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <label
+                    htmlFor="topic-select"
+                    style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 6 }}
+                  >
+                    Select Discussion Topic (cannot be changed once session starts):
+                  </label>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      alignItems: 'center',
+                      width: '100%',
+                    }}
+                  >
+                    <select
+                      id="topic-select"
+                      value={selectedTopicId}
+                      onChange={(e) => setSelectedTopicId(e.target.value)}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        width: '100%',
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid #d1d5db',
+                        fontSize: 13,
+                        background: '#ffffff',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {topics.map((t) => (
+                        <option key={t.topic_id} value={t.topic_id}>
+                          {t.title} — {t.main_question}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleReset(sessionState.condition_key, selectedTopicId)}
+                      style={{ ...secondaryBtnStyle, whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >
+                      Start with Topic
+                    </button>
+                  </div>
+                  {previewTopic && (
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6, lineHeight: 1.4 }}>
+                      {previewTopic.description}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{ fontSize: 13, color: '#6b7280', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                <span>Switch Condition:</span>
+                {['condition_1', 'condition_2', 'condition_3'].map((cKey) => (
+                  <button
+                    key={cKey}
+                    type="button"
+                    onClick={() => handleReset(cKey, selectedTopicId)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      border:
+                        sessionState.condition_key === cKey
+                          ? '1px solid #2563eb'
+                          : '1px solid #d1d5db',
+                      background: sessionState.condition_key === cKey ? '#eff6ff' : '#ffffff',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    {cKey === 'condition_1'
+                      ? '3 Humans'
+                      : cKey === 'condition_2'
+                      ? '2 Humans + 1 AI'
+                      : '1 Human + 2 AI'}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -329,7 +448,7 @@ const primaryBtnStyle = {
 }
 
 const secondaryBtnStyle = {
-  padding: '6px 12px',
+  padding: '7px 12px',
   borderRadius: 6,
   border: '1px solid #d1d5db',
   background: '#ffffff',
@@ -338,4 +457,3 @@ const secondaryBtnStyle = {
   fontWeight: 500,
   cursor: 'pointer',
 }
-

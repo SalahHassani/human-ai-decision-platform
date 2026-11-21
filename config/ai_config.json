@@ -1,0 +1,1635 @@
+{
+  "engine": {
+    "type": "rule_based",
+    "enabled": true,
+    "version": "1.0.0"
+  },
+  "session": {
+    "enforce_topic_lock": true,
+    "one_topic_per_session": true,
+    "topic_immutable_after_selection": true,
+    "shared_topic_between_participants": true,
+    "allow_ai_topic_selection": false,
+    "allow_topic_fallback": false,
+    "allow_cross_topic_content": false
+  },
+  "discussion": {
+    "rounds": 2,
+    "discussion_duration_seconds": 60,
+    "max_messages_per_ai_per_round": 2,
+    "min_response_words": 12,
+    "max_response_words": 75,
+    "context_aware": true,
+    "avoid_repeated_questions": true,
+    "avoid_duplicate_arguments": true,
+    "allow_agreement": true,
+    "allow_disagreement": true,
+    "allow_follow_up_questions": true,
+    "allow_compromise": true,
+    "allow_argument_development": true,
+    "reference_previous_round": true
+  },
+  "argument_selection": {
+    "use_stable_argument_ids": true,
+    "prevent_duplicate_introductions": true,
+    "allow_discussion_of_existing_arguments": true,
+    "allow_agreement_with_existing_arguments": true,
+    "allow_disagreement_with_existing_arguments": true,
+    "prefer_unused_arguments": true,
+    "check_topic_relevance": true
+  },
+  "question_selection": {
+    "use_stable_question_ids": true,
+    "prevent_duplicate_questions": true,
+    "prevent_repeating_main_question": true,
+    "allow_answering_existing_questions": true
+  },
+  "personalities": {
+    "analytical": {
+      "description": "A logical participant focused on evidence, feasibility, efficiency and consequences.",
+      "preferred_strategies": [
+        "evaluate_consequence",
+        "add_evidence",
+        "evaluate_feasibility",
+        "compare_alternatives",
+        "ask_question"
+      ],
+      "argument_preferences": [
+        "evidence",
+        "efficiency",
+        "cost",
+        "feasibility",
+        "long_term_impact"
+      ],
+      "communication_style": [
+        "logical",
+        "clear",
+        "reasoned",
+        "practical"
+      ]
+    },
+    "cooperative": {
+      "description": "A collaborative participant focused on common ground, fairness and practical solutions.",
+      "preferred_strategies": [
+        "build_on_idea",
+        "seek_compromise",
+        "agree",
+        "develop_proposal",
+        "address_concern"
+      ],
+      "argument_preferences": [
+        "collaboration",
+        "fairness",
+        "team_satisfaction",
+        "compromise",
+        "shared_benefit"
+      ],
+      "communication_style": [
+        "constructive",
+        "supportive",
+        "collaborative",
+        "solution_oriented"
+      ]
+    },
+    "critical": {
+      "description": "A questioning participant focused on weaknesses, risks and alternative perspectives.",
+      "preferred_strategies": [
+        "challenge_assumption",
+        "identify_concern",
+        "disagree",
+        "identify_tradeoff",
+        "compare_alternatives"
+      ],
+      "argument_preferences": [
+        "risk",
+        "weakness",
+        "unintended_consequences",
+        "assumptions",
+        "alternative_perspectives"
+      ],
+      "communication_style": [
+        "questioning",
+        "analytical",
+        "challenging",
+        "careful"
+      ]
+    }
+  },
+  "round_behavior": {
+    "round_1": {
+      "name": "Exploration",
+      "objective": "Explore the selected topic and introduce different perspectives.",
+      "preferred_strategies": [
+        "introduce_argument",
+        "ask_question",
+        "agree",
+        "disagree",
+        "identify_concern",
+        "suggest_alternative",
+        "build_on_idea"
+      ],
+      "avoid": [
+        "repeating_main_question",
+        "repeating_existing_argument",
+        "repeating_existing_question"
+      ]
+    },
+    "round_2": {
+      "name": "Deeper Analysis",
+      "objective": "Evaluate the arguments from Round 1 and develop stronger conclusions.",
+      "preferred_strategies": [
+        "evaluate_consequence",
+        "challenge_assumption",
+        "compare_alternatives",
+        "identify_tradeoff",
+        "develop_proposal",
+        "address_concern",
+        "seek_compromise",
+        "evaluate_feasibility",
+        "summarize_position"
+      ],
+      "must_reference_previous_round": true,
+      "avoid": [
+        "restarting_discussion",
+        "repeating_round_one_messages",
+        "introducing_unrelated_topic_content"
+      ]
+    }
+  },
+  "strategies": {
+    "introduce_argument": "Introduce a new argument from the selected topic.",
+    "ask_question": "Ask a relevant question that has not already been asked.",
+    "agree": "Support an existing argument and add reasoning.",
+    "disagree": "Challenge an existing argument with a relevant counterpoint.",
+    "add_evidence": "Add a supporting consideration to an existing argument.",
+    "identify_concern": "Identify a potential problem or limitation.",
+    "suggest_alternative": "Introduce a different possible approach.",
+    "build_on_idea": "Develop another participant's existing idea.",
+    "evaluate_consequence": "Examine the likely consequences of a proposed option.",
+    "challenge_assumption": "Question an assumption behind an existing argument.",
+    "compare_alternatives": "Compare the strengths and weaknesses of different options.",
+    "identify_tradeoff": "Explain what must be sacrificed when choosing an option.",
+    "develop_proposal": "Turn an existing idea into a more specific proposal.",
+    "address_concern": "Respond to a concern raised earlier.",
+    "seek_compromise": "Find a solution combining different viewpoints.",
+    "evaluate_feasibility": "Assess whether a proposal is realistic.",
+    "summarize_position": "Summarize a participant's position using existing discussion points."
+  },
+  "validation": {
+    "validate_topic_id": true,
+    "validate_argument_ids": true,
+    "validate_question_ids": true,
+    "validate_response_length": true,
+    "validate_topic_relevance": true,
+    "reject_cross_topic_content": true,
+    "reject_invalid_strategy": true
+  },
+  "topics": {
+    "meeting_scheduling": {
+      "topic_id": "meeting_scheduling",
+      "title": "Meeting Scheduling",
+      "description": "A team needs to decide how to schedule its regular weekly meetings.",
+      "main_question": "What is the most suitable time for the team's weekly meeting?",
+      "options": [
+        { "id": "morning", "label": "Morning meetings" },
+        { "id": "afternoon", "label": "Afternoon meetings" },
+        { "id": "flexible", "label": "Flexible scheduling" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "morning_coordination",
+          "category": "benefit",
+          "idea": "Morning meetings improve coordination.",
+          "related_options": ["morning"],
+          "keywords": ["coordination", "priorities", "communication"],
+          "variations": [
+            "Morning meetings help everyone align their priorities at the start of the day.",
+            "Starting the day together can improve coordination across the team.",
+            "An early meeting gives everyone an opportunity to clarify their tasks.",
+            "Discussing priorities in the morning could prevent misunderstandings later.",
+            "A morning meeting can establish a shared direction for the day."
+          ]
+        },
+        {
+          "argument_id": "afternoon_preparation",
+          "category": "benefit",
+          "idea": "Afternoon meetings allow more preparation.",
+          "related_options": ["afternoon"],
+          "keywords": ["preparation", "progress", "productivity"],
+          "variations": [
+            "An afternoon meeting gives employees more time to prepare updates.",
+            "People may have completed some work before discussing their progress.",
+            "Scheduling later could make it easier to present meaningful progress.",
+            "Employees might contribute more effectively after completing initial tasks.",
+            "A later meeting allows more preparation and better-informed discussions."
+          ]
+        },
+        {
+          "argument_id": "fixed_schedule",
+          "category": "benefit",
+          "idea": "Fixed meeting times improve predictability.",
+          "related_options": ["morning", "afternoon"],
+          "keywords": ["predictability", "routine", "planning"],
+          "variations": [
+            "A fixed meeting time makes weekly planning easier.",
+            "Employees can organize their schedules around a predictable meeting.",
+            "Keeping the same time every week reduces scheduling confusion.",
+            "A consistent schedule helps everyone know when coordination will happen.",
+            "Regular timing can make team routines more reliable."
+          ]
+        },
+        {
+          "argument_id": "flexible_schedule",
+          "category": "benefit",
+          "idea": "Flexible meeting times accommodate different schedules.",
+          "related_options": ["flexible"],
+          "keywords": ["flexibility", "availability", "work_life"],
+          "variations": [
+            "Flexible scheduling can accommodate employees with different commitments.",
+            "Changing the meeting time occasionally may make participation easier.",
+            "A flexible approach recognizes that employees do not all work in the same way.",
+            "Allowing some scheduling flexibility could improve attendance.",
+            "Different meeting times may distribute inconvenience more fairly."
+          ]
+        },
+        {
+          "argument_id": "meeting_attendance",
+          "category": "concern",
+          "idea": "Different schedules may make full attendance difficult.",
+          "related_options": ["morning", "afternoon", "flexible"],
+          "keywords": ["attendance", "availability", "participation"],
+          "variations": [
+            "Some employees may regularly be unavailable at the selected time.",
+            "A single meeting time might exclude people with different schedules.",
+            "We should consider whether everyone can realistically attend.",
+            "Scheduling conflicts could reduce participation.",
+            "The chosen time should not consistently disadvantage certain team members."
+          ]
+        },
+        {
+          "argument_id": "rotating_schedule",
+          "category": "compromise",
+          "idea": "Rotating meeting times can distribute inconvenience.",
+          "related_options": ["flexible"],
+          "keywords": ["rotation", "fairness", "compromise"],
+          "variations": [
+            "We could alternate between morning and afternoon meetings.",
+            "A rotating schedule may distribute inconvenience more fairly.",
+            "Perhaps the meeting time should change periodically.",
+            "Alternating times could accommodate different employee preferences.",
+            "A rotation might be a reasonable compromise between fixed and flexible scheduling."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "attendance",
+          "category": "participation",
+          "text": "Should everyone be required to attend every weekly meeting?"
+        },
+        {
+          "question_id": "flexibility",
+          "category": "scheduling",
+          "text": "Would flexible meeting times make coordination more difficult?"
+        },
+        {
+          "question_id": "remote_participation",
+          "category": "accessibility",
+          "text": "How should employees working remotely participate?"
+        },
+        {
+          "question_id": "meeting_duration",
+          "category": "efficiency",
+          "text": "Would shorter meetings improve productivity?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "rotating_meeting_time",
+          "idea": "Rotate between morning and afternoon meetings.",
+          "variations": [
+            "We could alternate between morning and afternoon meetings each week.",
+            "A rotating schedule could accommodate more people's preferences fairly.",
+            "Perhaps we should alternate between morning and afternoon slots every other week."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore different scheduling preferences and introduce relevant arguments.",
+        "preferred_argument_categories": ["benefit", "concern"]
+      },
+      "round_2": {
+        "objective": "Evaluate the consequences of different scheduling approaches.",
+        "strategies": [
+          "evaluate_consequence",
+          "identify_tradeoff",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "remote_work_policy": {
+      "topic_id": "remote_work_policy",
+      "title": "Remote Work Policy",
+      "description": "A company is deciding whether employees should work remotely, in the office or through a hybrid arrangement.",
+      "main_question": "Should the company introduce a hybrid working policy?",
+      "options": [
+        { "id": "remote", "label": "Fully remote" },
+        { "id": "office", "label": "Fully office-based" },
+        { "id": "hybrid", "label": "Hybrid working" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "remote_flexibility",
+          "category": "benefit",
+          "idea": "Remote work improves employee flexibility.",
+          "related_options": ["remote", "hybrid"],
+          "keywords": ["flexibility", "autonomy", "satisfaction"],
+          "variations": [
+            "Remote work gives employees more control over their daily schedules.",
+            "Working from home can make it easier to balance professional and personal responsibilities.",
+            "Employees may appreciate having more flexibility in where they work.",
+            "Remote arrangements can accommodate different working preferences.",
+            "Greater flexibility could improve employee satisfaction."
+          ]
+        },
+        {
+          "argument_id": "office_collaboration",
+          "category": "benefit",
+          "idea": "Office work supports face-to-face collaboration.",
+          "related_options": ["office", "hybrid"],
+          "keywords": ["collaboration", "communication", "teamwork"],
+          "variations": [
+            "Being in the same office can make spontaneous collaboration easier.",
+            "Face-to-face interaction may help teams solve problems more quickly.",
+            "Office environments create opportunities for informal communication.",
+            "Working together physically can strengthen team relationships.",
+            "Some complex discussions may be easier in person."
+          ]
+        },
+        {
+          "argument_id": "commuting_reduction",
+          "category": "benefit",
+          "idea": "Remote work reduces commuting time and expenses.",
+          "related_options": ["remote", "hybrid"],
+          "keywords": ["commuting", "time", "expenses"],
+          "variations": [
+            "Working remotely saves employees time spent travelling to work.",
+            "Reduced commuting can lower transport expenses.",
+            "Employees could use commuting time for productive activities or rest.",
+            "Less travel may also reduce daily stress.",
+            "Remote work can make long-distance employment more practical."
+          ]
+        },
+        {
+          "argument_id": "remote_communication",
+          "category": "concern",
+          "idea": "Remote work can create communication challenges.",
+          "related_options": ["remote"],
+          "keywords": ["communication", "coordination", "misunderstanding"],
+          "variations": [
+            "Communication can become more difficult when employees rarely meet in person.",
+            "Remote teams may need more deliberate coordination.",
+            "Misunderstandings can take longer to resolve through digital communication.",
+            "Informal information sharing may decline when everyone works remotely.",
+            "Teams might need additional processes to stay aligned."
+          ]
+        },
+        {
+          "argument_id": "hybrid_balance",
+          "category": "compromise",
+          "idea": "Hybrid work can balance flexibility and collaboration.",
+          "related_options": ["hybrid"],
+          "keywords": ["balance", "flexibility", "collaboration"],
+          "variations": [
+            "A hybrid model could combine the advantages of home and office work.",
+            "Employees could work remotely while meeting in person when collaboration is necessary.",
+            "A few shared office days might preserve teamwork without requiring daily attendance.",
+            "Hybrid arrangements could offer flexibility while maintaining personal interaction.",
+            "A balanced policy may address the concerns of both sides."
+          ]
+        },
+        {
+          "argument_id": "department_differences",
+          "category": "concern",
+          "idea": "Different departments may have different workplace requirements.",
+          "related_options": ["remote", "office", "hybrid"],
+          "keywords": ["departments", "requirements", "operations"],
+          "variations": [
+            "A single policy may not work equally well for every department.",
+            "Some teams depend more heavily on in-person coordination.",
+            "Workplace requirements can differ depending on the type of task.",
+            "The company should consider departmental needs before setting one policy.",
+            "Flexibility between departments might be more practical than a universal rule."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "office_days",
+          "category": "scheduling",
+          "text": "How many office days should employees have each week?"
+        },
+        {
+          "question_id": "department_policy",
+          "category": "fairness",
+          "text": "Should the policy differ between departments?"
+        },
+        {
+          "question_id": "performance_measurement",
+          "category": "management",
+          "text": "How should employee performance be evaluated in a remote environment?"
+        },
+        {
+          "question_id": "new_employees",
+          "category": "onboarding",
+          "text": "How might remote work affect the integration of new employees?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "two_office_days",
+          "idea": "Use two shared office days and allow remote work on other days.",
+          "variations": [
+            "Two common office days might provide enough time for collaboration.",
+            "We could reserve specific days for teamwork and leave other days flexible.",
+            "A shared hybrid schedule with two core office days may offer a practical balance."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore flexibility, collaboration, communication and employee preferences.",
+        "preferred_argument_categories": ["benefit", "concern", "compromise"]
+      },
+      "round_2": {
+        "objective": "Evaluate the productivity, cost and collaboration consequences of each working arrangement.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "project_deadline": {
+      "topic_id": "project_deadline",
+      "title": "Project Deadline",
+      "description": "A development team is behind schedule and must decide whether to release fewer features on time or delay the project.",
+      "main_question": "Should the team prioritize meeting the deadline or delivering the complete product?",
+      "options": [
+        { "id": "on_time_reduced_scope", "label": "Release on time with fewer features" },
+        { "id": "delay_complete_product", "label": "Delay and complete the product" },
+        { "id": "phased_release", "label": "Use a phased release" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "deadline_customer_trust",
+          "category": "benefit",
+          "idea": "Meeting the deadline maintains customer trust.",
+          "related_options": ["on_time_reduced_scope"],
+          "keywords": ["deadline", "trust", "commitment"],
+          "variations": [
+            "Meeting the agreed deadline can demonstrate reliability to customers.",
+            "Customers may lose confidence if the release is repeatedly delayed.",
+            "Keeping the original date helps preserve the team's commitments.",
+            "An on-time delivery can strengthen the company's reputation.",
+            "Delivering as promised may be important for customer relationships."
+          ]
+        },
+        {
+          "argument_id": "quality_improvement",
+          "category": "benefit",
+          "idea": "A delay can provide more time to improve product quality.",
+          "related_options": ["delay_complete_product"],
+          "keywords": ["quality", "testing", "reliability"],
+          "variations": [
+            "Additional time could allow the team to test the product more thoroughly.",
+            "Delaying the release may reduce the risk of serious defects.",
+            "A more complete product could create a better customer experience.",
+            "Rushing may leave important quality issues unresolved.",
+            "A short delay might prevent larger problems after launch."
+          ]
+        },
+        {
+          "argument_id": "reduced_scope",
+          "category": "alternative",
+          "idea": "Reducing the feature scope can enable an on-time release.",
+          "related_options": ["on_time_reduced_scope", "phased_release"],
+          "keywords": ["scope", "priorities", "features"],
+          "variations": [
+            "The team could focus on essential features and postpone less important ones.",
+            "Reducing the initial scope may make the deadline achievable.",
+            "A smaller first release could deliver the most important functionality.",
+            "Not every planned feature needs to be included in the first version.",
+            "Prioritizing core functionality could balance speed and quality."
+          ]
+        },
+        {
+          "argument_id": "technical_debt",
+          "category": "concern",
+          "idea": "Rushing may create technical debt.",
+          "related_options": ["on_time_reduced_scope"],
+          "keywords": ["technical_debt", "maintenance", "engineering"],
+          "variations": [
+            "Rushing implementation can create technical problems that are expensive to fix later.",
+            "Shortcuts taken under deadline pressure may increase maintenance work.",
+            "An early release could leave the team with additional technical debt.",
+            "The long-term cost of rushed development should be considered.",
+            "Poorly tested changes may make future development more difficult."
+          ]
+        },
+        {
+          "argument_id": "delay_cost",
+          "category": "concern",
+          "idea": "Delaying the project can create additional costs.",
+          "related_options": ["delay_complete_product"],
+          "keywords": ["cost", "resources", "budget"],
+          "variations": [
+            "An extended timeline may increase staffing and operational costs.",
+            "The team may need additional resources to complete the delayed project.",
+            "A delay could affect other planned work.",
+            "Additional development time may increase the total project budget.",
+            "The financial consequences of postponement should be evaluated."
+          ]
+        },
+        {
+          "argument_id": "phased_delivery",
+          "category": "compromise",
+          "idea": "A phased release can balance delivery speed and product quality.",
+          "related_options": ["phased_release"],
+          "keywords": ["phased", "release", "priorities"],
+          "variations": [
+            "We could release essential functionality first and add the remaining features later.",
+            "A phased release may satisfy immediate needs without abandoning quality.",
+            "The product could launch in stages based on feature importance.",
+            "An initial release followed by planned improvements might be a reasonable compromise.",
+            "Delivering in phases could reduce the pressure of completing everything at once."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "essential_features",
+          "category": "prioritization",
+          "text": "Which features are essential for the initial release?"
+        },
+        {
+          "question_id": "defect_severity",
+          "category": "quality",
+          "text": "How serious are the remaining defects?"
+        },
+        {
+          "question_id": "additional_resources",
+          "category": "resources",
+          "text": "Could additional resources help the team meet the deadline?"
+        },
+        {
+          "question_id": "customer_preference",
+          "category": "customer",
+          "text": "Would customers prefer an earlier limited release or a later complete product?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "minimum_viable_release",
+          "idea": "Release the essential product functionality first and deliver additional features later.",
+          "variations": [
+            "We could launch the core product first and add secondary features in later updates.",
+            "A minimum viable release might protect the deadline while preserving quality.",
+            "A phased delivery plan could give customers something useful without rushing every feature."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the tension between deadlines, quality, scope and customer expectations.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative"]
+      },
+      "round_2": {
+        "objective": "Evaluate delay costs, release risks and practical delivery strategies.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise"
+        ]
+      }
+    },
+    "budget_allocation": {
+      "topic_id": "budget_allocation",
+      "title": "Budget Allocation",
+      "description": "A department has a limited budget and must choose between employee training, new technology and additional hiring.",
+      "main_question": "How should the department allocate its limited budget?",
+      "options": [
+        { "id": "training", "label": "Employee training" },
+        { "id": "technology", "label": "New technology" },
+        { "id": "hiring", "label": "Additional hiring" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "training_investment",
+          "category": "benefit",
+          "idea": "Training improves existing employees' capabilities.",
+          "related_options": ["training"],
+          "keywords": ["skills", "development", "retention"],
+          "variations": [
+            "Training can strengthen the skills already available in the team.",
+            "Investing in employees may improve performance over time.",
+            "Professional development can help staff adapt to new responsibilities.",
+            "Training may reduce the need to hire for every skills gap.",
+            "Building internal capabilities can create long-term value."
+          ]
+        },
+        {
+          "argument_id": "technology_efficiency",
+          "category": "benefit",
+          "idea": "New technology can improve operational efficiency.",
+          "related_options": ["technology"],
+          "keywords": ["automation", "efficiency", "productivity"],
+          "variations": [
+            "New technology may help employees complete tasks more efficiently.",
+            "Automation could reduce repetitive work.",
+            "Better tools can improve the quality and speed of operations.",
+            "Technology investment may create productivity gains.",
+            "Modern systems could help the department handle more work."
+          ]
+        },
+        {
+          "argument_id": "hiring_capacity",
+          "category": "benefit",
+          "idea": "Additional hiring increases team capacity.",
+          "related_options": ["hiring"],
+          "keywords": ["capacity", "workload", "staffing"],
+          "variations": [
+            "Hiring more employees can distribute the workload.",
+            "Additional staff may help the department meet growing demand.",
+            "A larger team can bring new skills and perspectives.",
+            "Recruitment could reduce pressure on existing employees.",
+            "More capacity may allow projects to progress in parallel."
+          ]
+        },
+        {
+          "argument_id": "technology_cost",
+          "category": "concern",
+          "idea": "Technology can create maintenance and implementation costs.",
+          "related_options": ["technology"],
+          "keywords": ["maintenance", "implementation", "cost"],
+          "variations": [
+            "The purchase price may not reflect the full cost of new technology.",
+            "Implementation and maintenance can require significant resources.",
+            "Employees may need training before a new system becomes useful.",
+            "Technology costs can continue after the initial investment.",
+            "Integration with existing systems may add complexity."
+          ]
+        },
+        {
+          "argument_id": "hiring_recurring_cost",
+          "category": "concern",
+          "idea": "Hiring creates recurring employment expenses.",
+          "related_options": ["hiring"],
+          "keywords": ["salary", "recurring_cost", "recruitment"],
+          "variations": [
+            "New employees create ongoing salary commitments.",
+            "Recruitment also involves onboarding and administrative costs.",
+            "A larger workforce may increase long-term financial obligations.",
+            "Hiring is difficult to reverse if future demand decreases.",
+            "The department should consider total employment costs."
+          ]
+        },
+        {
+          "argument_id": "balanced_budget",
+          "category": "compromise",
+          "idea": "A balanced allocation can reduce dependency on one investment.",
+          "related_options": ["training", "technology", "hiring"],
+          "keywords": ["balance", "portfolio", "risk"],
+          "variations": [
+            "A balanced budget could support several priorities at once.",
+            "We may not need to choose only one investment area.",
+            "Combining training with targeted technology could improve current capacity.",
+            "A mixed allocation can reduce the risk of overinvesting in one solution.",
+            "A phased budget could test which investment produces the greatest value."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "return_on_investment",
+          "category": "evaluation",
+          "text": "Which investment is likely to create the greatest long-term value?"
+        },
+        {
+          "question_id": "immediate_needs",
+          "category": "prioritization",
+          "text": "Should immediate operational needs outweigh future benefits?"
+        },
+        {
+          "question_id": "success_measurement",
+          "category": "measurement",
+          "text": "How should the success of each investment be measured?"
+        },
+        {
+          "question_id": "minimum_allocation",
+          "category": "fairness",
+          "text": "Does each area require a minimum level of funding?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "balanced_training_and_tools",
+          "idea": "Combine targeted training with selective technology upgrades before committing to permanent hiring.",
+          "variations": [
+            "Splitting the budget between staff training and targeted tools avoids heavy recurring salary obligations.",
+            "We could fund essential training alongside a focused technology upgrade and review hiring next quarter.",
+            "A balanced allocation across training and tools reduces risk while boosting current team output."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the main perspectives, benefits, concerns and alternatives within this scenario.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative", "compromise"]
+      },
+      "round_2": {
+        "objective": "Compare investment value, implementation costs and long-term sustainability.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "team_leadership": {
+      "topic_id": "team_leadership",
+      "title": "Team Leadership",
+      "description": "A company must choose a team leader between candidates with different strengths.",
+      "main_question": "What qualities should matter most when selecting a team leader?",
+      "options": [
+        { "id": "technical", "label": "Technical expertise" },
+        { "id": "communication", "label": "Communication and management" },
+        { "id": "shared", "label": "Shared leadership" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "technical_expertise",
+          "category": "benefit",
+          "idea": "Technical expertise supports informed decisions.",
+          "related_options": ["technical"],
+          "keywords": ["knowledge", "decisions", "credibility"],
+          "variations": [
+            "Technical knowledge can help a leader understand complex decisions.",
+            "A technically experienced leader may recognize implementation risks.",
+            "Expertise can help the team make informed choices.",
+            "Technical credibility may build trust with specialists.",
+            "Understanding the work can improve prioritization."
+          ]
+        },
+        {
+          "argument_id": "communication_skills",
+          "category": "benefit",
+          "idea": "Communication skills improve team coordination.",
+          "related_options": ["communication"],
+          "keywords": ["communication", "coordination", "clarity"],
+          "variations": [
+            "Clear communication helps the team understand its priorities.",
+            "A good communicator can reduce misunderstandings.",
+            "Leaders need to explain decisions and expectations effectively.",
+            "Communication can help resolve disagreements.",
+            "Strong interpersonal skills may improve collaboration."
+          ]
+        },
+        {
+          "argument_id": "leadership_experience",
+          "category": "benefit",
+          "idea": "Leadership experience helps resolve difficult situations.",
+          "related_options": ["communication"],
+          "keywords": ["experience", "management", "conflict"],
+          "variations": [
+            "Previous leadership experience may help when difficult decisions arise.",
+            "Experienced managers may be better prepared for conflict.",
+            "Leadership practice can improve delegation and planning.",
+            "Experience can help a leader anticipate team challenges.",
+            "A proven record may reduce uncertainty in the appointment."
+          ]
+        },
+        {
+          "argument_id": "technical_management_gap",
+          "category": "concern",
+          "idea": "Technical specialists may lack management experience.",
+          "related_options": ["technical"],
+          "keywords": ["management", "delegation", "people"],
+          "variations": [
+            "Technical expertise does not automatically translate into people management.",
+            "A strong specialist may need support when handling team conflict.",
+            "Managing performance requires skills beyond technical knowledge.",
+            "The candidate may need leadership development.",
+            "The company should assess management ability separately from technical ability."
+          ]
+        },
+        {
+          "argument_id": "leadership_learning",
+          "category": "alternative",
+          "idea": "Leadership skills can be developed through training and mentoring.",
+          "related_options": ["communication", "technical"],
+          "keywords": ["development", "mentoring", "training"],
+          "variations": [
+            "Leadership ability can improve with coaching and experience.",
+            "A technically strong candidate could receive management mentoring.",
+            "The company can support a new leader with structured development.",
+            "Training may help close gaps in people management.",
+            "The appointment need not assume that every leadership skill is already present."
+          ]
+        },
+        {
+          "argument_id": "shared_leadership",
+          "category": "compromise",
+          "idea": "Shared leadership can combine technical and management strengths.",
+          "related_options": ["technical", "communication", "shared"],
+          "keywords": ["shared", "collaboration", "responsibility"],
+          "variations": [
+            "The team could distribute technical and people-management responsibilities.",
+            "A deputy or co-lead may complement the selected leader's strengths.",
+            "Shared leadership could combine different areas of expertise.",
+            "The company might appoint one leader and provide a technical advisor.",
+            "A structured support arrangement may balance the candidates' strengths."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "technical_essential",
+          "category": "requirements",
+          "text": "Is technical expertise essential for this leadership role?"
+        },
+        {
+          "question_id": "leadership_development",
+          "category": "development",
+          "text": "Can leadership skills be developed after appointment?"
+        },
+        {
+          "question_id": "team_participation",
+          "category": "process",
+          "text": "Should the team participate in the selection decision?"
+        },
+        {
+          "question_id": "performance_evaluation",
+          "category": "accountability",
+          "text": "How should leadership performance be evaluated?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "lead_plus_tech_co_lead",
+          "idea": "Appoint a strong communicator as team lead paired with a dedicated technical co-lead.",
+          "variations": [
+            "Pairing a strong communicator as lead with a senior technical advisor covers both priorities.",
+            "We could separate people management from technical architecture across a lead and co-lead.",
+            "A structured lead-and-technical-deputy model ensures neither management nor technical depth is neglected."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the main perspectives, benefits, concerns and alternatives within this scenario.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative", "compromise"]
+      },
+      "round_2": {
+        "objective": "Compare leadership requirements and consider mentoring or shared leadership.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "hiring_decision": {
+      "topic_id": "hiring_decision",
+      "title": "Hiring Decision",
+      "description": "A company must choose between an experienced candidate and a less experienced candidate with strong potential.",
+      "main_question": "Should the company prioritize experience or potential when hiring?",
+      "options": [
+        { "id": "experience", "label": "Prioritize experience" },
+        { "id": "potential", "label": "Prioritize potential" },
+        { "id": "structured", "label": "Structured assessment" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "experience_onboarding",
+          "category": "benefit",
+          "idea": "Experience can reduce onboarding time.",
+          "related_options": ["experience"],
+          "keywords": ["experience", "onboarding", "productivity"],
+          "variations": [
+            "An experienced candidate may become productive more quickly.",
+            "Previous work experience can reduce the need for basic training.",
+            "A familiar skill set may make onboarding easier.",
+            "Experience can help the team address immediate needs.",
+            "The candidate may require less supervision at the beginning."
+          ]
+        },
+        {
+          "argument_id": "potential_growth",
+          "category": "benefit",
+          "idea": "Potential supports long-term development.",
+          "related_options": ["potential"],
+          "keywords": ["learning", "growth", "adaptability"],
+          "variations": [
+            "A candidate with strong learning ability may develop quickly.",
+            "Potential can be valuable when the role is expected to evolve.",
+            "A motivated junior employee may grow with the organization.",
+            "Learning ability can matter more than familiarity with one tool.",
+            "Hiring for potential can build future internal capabilities."
+          ]
+        },
+        {
+          "argument_id": "experienced_salary",
+          "category": "concern",
+          "idea": "Experienced candidates may require higher salaries.",
+          "related_options": ["experience"],
+          "keywords": ["salary", "budget", "compensation"],
+          "variations": [
+            "Experienced candidates may expect higher compensation.",
+            "The salary premium should be compared with the value they bring.",
+            "A higher hiring cost can limit the remaining recruitment budget.",
+            "Experience may not always justify a substantially higher salary.",
+            "The company should evaluate total value rather than years alone."
+          ]
+        },
+        {
+          "argument_id": "junior_supervision",
+          "category": "concern",
+          "idea": "Less experienced employees may require additional supervision.",
+          "related_options": ["potential"],
+          "keywords": ["supervision", "training", "management"],
+          "variations": [
+            "A junior employee may need more guidance initially.",
+            "Training can take time away from other team members.",
+            "The manager should consider the support required during onboarding.",
+            "A skills gap may affect short-term delivery.",
+            "The team must have capacity to develop a less experienced hire."
+          ]
+        },
+        {
+          "argument_id": "practical_assessment",
+          "category": "alternative",
+          "idea": "Practical assessments can reveal actual ability.",
+          "related_options": ["experience", "potential", "structured"],
+          "keywords": ["assessment", "skills", "evidence"],
+          "variations": [
+            "A practical task may provide better evidence than a CV alone.",
+            "Candidates can demonstrate how they approach real problems.",
+            "Work samples can reveal learning ability and technical judgment.",
+            "A structured assessment can make comparisons more objective.",
+            "The hiring process should measure skills relevant to the role."
+          ]
+        },
+        {
+          "argument_id": "structured_selection",
+          "category": "compromise",
+          "idea": "A structured process can balance experience and potential.",
+          "related_options": ["experience", "potential", "structured"],
+          "keywords": ["fairness", "criteria", "selection"],
+          "variations": [
+            "We could evaluate candidates against both current skills and growth potential.",
+            "A weighted assessment may balance immediate needs with long-term value.",
+            "The company can define essential skills and trainable skills separately.",
+            "A consistent scorecard could make the decision more transparent.",
+            "The best choice may depend on which capabilities are most urgent."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "experience_measurement",
+          "category": "assessment",
+          "text": "How should relevant experience be measured?"
+        },
+        {
+          "question_id": "training_investment",
+          "category": "development",
+          "text": "Should the company invest in training after hiring?"
+        },
+        {
+          "question_id": "team_fit",
+          "category": "collaboration",
+          "text": "How important is team fit compared with technical ability?"
+        },
+        {
+          "question_id": "practical_task",
+          "category": "assessment",
+          "text": "Could a practical task be more useful than an interview alone?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "weighted_scorecard_and_trial",
+          "idea": "Use a weighted rubric combining a practical work sample with a structured onboarding plan.",
+          "variations": [
+            "A weighted rubric with a practical work sample objectively measures both readiness and learning speed.",
+            "We can pair a practical task with a 90-day mentoring plan so a high-potential hire ramps up safely.",
+            "Defining must-have baseline skills separately from trainable potential makes the hiring choice transparent."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the main perspectives, benefits, concerns and alternatives within this scenario.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative", "compromise"]
+      },
+      "round_2": {
+        "objective": "Compare hiring costs, onboarding requirements and long-term development.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "product_launch": {
+      "topic_id": "product_launch",
+      "title": "Product Launch",
+      "description": "A company has a functional product but some features remain unfinished and user feedback is limited.",
+      "main_question": "Should the company launch the product now or wait until further improvements are completed?",
+      "options": [
+        { "id": "early", "label": "Launch now" },
+        { "id": "delay", "label": "Wait and improve" },
+        { "id": "limited", "label": "Limited release" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "early_feedback",
+          "category": "benefit",
+          "idea": "An early launch provides market feedback.",
+          "related_options": ["early"],
+          "keywords": ["feedback", "market", "learning"],
+          "variations": [
+            "Launching earlier can reveal how customers actually use the product.",
+            "Real user feedback may help prioritize improvements.",
+            "An early release can test assumptions about market demand.",
+            "Customer reactions may reveal issues internal testing missed.",
+            "The team can learn from real usage before investing further."
+          ]
+        },
+        {
+          "argument_id": "additional_testing",
+          "category": "benefit",
+          "idea": "Additional testing can reduce launch risk.",
+          "related_options": ["delay"],
+          "keywords": ["testing", "quality", "reliability"],
+          "variations": [
+            "More testing may uncover problems before customers encounter them.",
+            "A delay can provide time to improve reliability.",
+            "A stronger first release may protect customer confidence.",
+            "Unfinished features could create a poor user experience.",
+            "Testing can reduce the chance of costly post-launch issues."
+          ]
+        },
+        {
+          "argument_id": "competitor_timing",
+          "category": "concern",
+          "idea": "A delayed launch may allow competitors to move first.",
+          "related_options": ["early"],
+          "keywords": ["competition", "timing", "market"],
+          "variations": [
+            "Competitors may capture attention while the company waits.",
+            "Market timing can matter when alternatives are emerging.",
+            "A long delay may reduce the product's first-mover opportunity.",
+            "The company should consider what competitors are likely to release.",
+            "Waiting may have an opportunity cost."
+          ]
+        },
+        {
+          "argument_id": "reputation_risk",
+          "category": "concern",
+          "idea": "A poor first impression can damage reputation.",
+          "related_options": ["delay"],
+          "keywords": ["reputation", "trust", "quality"],
+          "variations": [
+            "Customers may judge the product harshly if key features are incomplete.",
+            "A weak launch can be difficult to recover from.",
+            "Early defects may reduce confidence in the company.",
+            "The first user experience can influence future adoption.",
+            "The team should avoid launching below an acceptable quality threshold."
+          ]
+        },
+        {
+          "argument_id": "limited_release",
+          "category": "compromise",
+          "idea": "A limited release can balance feedback and risk.",
+          "related_options": ["limited"],
+          "keywords": ["pilot", "rollout", "feedback"],
+          "variations": [
+            "We could release the product to a small group first.",
+            "A controlled rollout may provide feedback without exposing every customer.",
+            "A pilot can test reliability under real conditions.",
+            "The company could expand access after resolving early issues.",
+            "A staged launch may balance speed with caution."
+          ]
+        },
+        {
+          "argument_id": "launch_criteria",
+          "category": "alternative",
+          "idea": "Clear launch criteria can make the decision more objective.",
+          "related_options": ["early", "delay", "limited"],
+          "keywords": ["criteria", "quality", "measurement"],
+          "variations": [
+            "The team should define minimum launch requirements before deciding.",
+            "A measurable quality threshold can reduce subjective disagreement.",
+            "We could launch once critical defects are resolved.",
+            "Clear criteria can help determine whether remaining features are essential.",
+            "A readiness checklist may make the decision more consistent."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "minimum_quality",
+          "category": "quality",
+          "text": "What minimum quality standard should be required before launch?"
+        },
+        {
+          "question_id": "small_group",
+          "category": "rollout",
+          "text": "Should the product first be released to a small user group?"
+        },
+        {
+          "question_id": "competitor_timing",
+          "category": "market",
+          "text": "How important is competitor timing in this decision?"
+        },
+        {
+          "question_id": "feedback_collection",
+          "category": "measurement",
+          "text": "How should customer feedback be collected?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "controlled_beta_rollout",
+          "idea": "Launch a controlled beta release to early adopters with explicit readiness criteria for general release.",
+          "variations": [
+            "A controlled beta to a small user cohort captures real feedback without risking broad brand damage.",
+            "We can ship a limited beta now while gating general availability on a strict defect checklist.",
+            "Starting with an invite-only pilot gives us market timing and real usage data safely."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the main perspectives, benefits, concerns and alternatives within this scenario.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative", "compromise"]
+      },
+      "round_2": {
+        "objective": "Evaluate reputational risks, market timing and the feasibility of a limited release.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "workplace_conflict": {
+      "topic_id": "workplace_conflict",
+      "title": "Workplace Conflict",
+      "description": "Two employees disagree about how to complete an important task, affecting team progress.",
+      "main_question": "How should the team resolve the disagreement?",
+      "options": [
+        { "id": "discussion", "label": "Direct discussion" },
+        { "id": "mediation", "label": "Manager mediation" },
+        { "id": "evidence", "label": "Evidence-based decision" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "direct_discussion",
+          "category": "benefit",
+          "idea": "Direct discussion can clarify misunderstandings.",
+          "related_options": ["discussion"],
+          "keywords": ["communication", "clarity", "resolution"],
+          "variations": [
+            "A direct conversation may reveal why the employees disagree.",
+            "Discussing the issue openly can prevent assumptions from growing.",
+            "Each person should have an opportunity to explain their reasoning.",
+            "Clarifying expectations may resolve the disagreement.",
+            "A respectful discussion can restore working relationships."
+          ]
+        },
+        {
+          "argument_id": "manager_mediation",
+          "category": "alternative",
+          "idea": "A manager can provide an impartial perspective.",
+          "related_options": ["mediation"],
+          "keywords": ["management", "neutrality", "resolution"],
+          "variations": [
+            "A manager may help keep the discussion constructive.",
+            "An impartial person can identify where the disagreement began.",
+            "Mediation may help the employees focus on the task rather than personalities.",
+            "A manager can clarify responsibilities and priorities.",
+            "Outside guidance may be useful if direct discussion fails."
+          ]
+        },
+        {
+          "argument_id": "compromise_relationships",
+          "category": "benefit",
+          "idea": "Compromise can preserve working relationships.",
+          "related_options": ["discussion", "mediation"],
+          "keywords": ["relationships", "fairness", "cooperation"],
+          "variations": [
+            "A compromise may help the employees continue working together.",
+            "Finding common ground can protect team relationships.",
+            "Both sides may be more willing to support a balanced solution.",
+            "A practical compromise can reduce disruption.",
+            "The team should aim for a solution people can implement."
+          ]
+        },
+        {
+          "argument_id": "avoidance_risk",
+          "category": "concern",
+          "idea": "Avoiding conflict can make the problem worse.",
+          "related_options": ["discussion", "mediation"],
+          "keywords": ["avoidance", "escalation", "trust"],
+          "variations": [
+            "Ignoring the disagreement may allow frustration to build.",
+            "The underlying problem could return in future projects.",
+            "Avoidance may delay a decision the team needs to make.",
+            "Unresolved conflict can affect other team members.",
+            "The team should address the issue before it escalates."
+          ]
+        },
+        {
+          "argument_id": "evidence_based_decision",
+          "category": "alternative",
+          "idea": "Evidence should guide the final decision.",
+          "related_options": ["evidence"],
+          "keywords": ["evidence", "performance", "objectivity"],
+          "variations": [
+            "The decision should be based on what works best for the task.",
+            "Relevant evidence can help move the discussion beyond personal preferences.",
+            "Testing both approaches may provide useful information.",
+            "Objective criteria can make the outcome easier to accept.",
+            "The team should compare the approaches against shared requirements."
+          ]
+        },
+        {
+          "argument_id": "clear_responsibilities",
+          "category": "compromise",
+          "idea": "Clear responsibilities can prevent similar disagreements.",
+          "related_options": ["discussion", "mediation", "evidence"],
+          "keywords": ["responsibility", "process", "prevention"],
+          "variations": [
+            "Clarifying ownership could prevent the same conflict from recurring.",
+            "The team may need clearer decision-making responsibilities.",
+            "Agreed processes can reduce ambiguity in future work.",
+            "A documented division of tasks may improve coordination.",
+            "The resolution should address both the current issue and its cause."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "manager_intervention",
+          "category": "mediation",
+          "text": "Should the manager intervene in the disagreement?"
+        },
+        {
+          "question_id": "evidence_or_consensus",
+          "category": "decision",
+          "text": "Should the decision be based on evidence or consensus?"
+        },
+        {
+          "question_id": "maintain_trust",
+          "category": "relationships",
+          "text": "How can the team maintain trust after the disagreement?"
+        },
+        {
+          "question_id": "repeated_conflict",
+          "category": "prevention",
+          "text": "What should happen if the same disagreement occurs again?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "facilitated_evidence_review",
+          "idea": "Hold a structured discussion using shared task criteria, escalating to manager mediation only if deadlocked.",
+          "variations": [
+            "Evaluating both approaches against objective task criteria in a facilitated discussion protects trust and speed.",
+            "We can start with a structured peer review of the evidence and involve a manager only if they remain deadlocked.",
+            "Documenting clear task ownership alongside an evidence-based choice resolves the task and prevents repeat friction."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the main perspectives, benefits, concerns and alternatives within this scenario.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative", "compromise"]
+      },
+      "round_2": {
+        "objective": "Examine the causes, compare resolution methods and develop a fair process.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "technology_selection": {
+      "topic_id": "technology_selection",
+      "title": "Technology Selection",
+      "description": "A company must choose between an inexpensive technology and a more expensive but scalable platform.",
+      "main_question": "Which technology should the company select?",
+      "options": [
+        { "id": "low_cost", "label": "Lower-cost technology" },
+        { "id": "scalable", "label": "More scalable technology" },
+        { "id": "pilot", "label": "Pilot before selection" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "low_initial_cost",
+          "category": "benefit",
+          "idea": "A lower initial cost reduces financial risk.",
+          "related_options": ["low_cost"],
+          "keywords": ["budget", "cost", "investment"],
+          "variations": [
+            "The less expensive option may reduce the immediate financial burden.",
+            "Lower upfront costs leave more budget for other priorities.",
+            "A smaller investment can be easier to approve.",
+            "The company may avoid paying for capabilities it does not yet need.",
+            "A lower-cost option could be sufficient for current requirements."
+          ]
+        },
+        {
+          "argument_id": "scalability",
+          "category": "benefit",
+          "idea": "Scalability supports future growth.",
+          "related_options": ["scalable"],
+          "keywords": ["growth", "capacity", "future"],
+          "variations": [
+            "A scalable platform may support the company's future needs.",
+            "Choosing a system that can grow could avoid another migration later.",
+            "Higher capacity may become valuable as usage increases.",
+            "The technology should support expected business growth.",
+            "A scalable solution can provide flexibility over time."
+          ]
+        },
+        {
+          "argument_id": "maintenance_cost",
+          "category": "concern",
+          "idea": "Maintenance costs affect total cost of ownership.",
+          "related_options": ["low_cost", "scalable"],
+          "keywords": ["maintenance", "ownership", "support"],
+          "variations": [
+            "The purchase price does not represent the full cost of ownership.",
+            "Maintenance and support may become significant expenses.",
+            "The company should compare costs over several years.",
+            "A complex platform may require specialized staff.",
+            "Ongoing costs could change which option is more economical."
+          ]
+        },
+        {
+          "argument_id": "integration_risk",
+          "category": "concern",
+          "idea": "Integration complexity can affect implementation.",
+          "related_options": ["low_cost", "scalable"],
+          "keywords": ["integration", "compatibility", "migration"],
+          "variations": [
+            "The new platform must work with existing systems.",
+            "Integration problems could delay implementation.",
+            "Data migration may introduce additional risks.",
+            "Compatibility should be tested before committing.",
+            "The company should consider the effort required to adopt the technology."
+          ]
+        },
+        {
+          "argument_id": "employee_adoption",
+          "category": "concern",
+          "idea": "Employee skills influence successful adoption.",
+          "related_options": ["low_cost", "scalable"],
+          "keywords": ["training", "adoption", "skills"],
+          "variations": [
+            "A powerful platform is less useful if employees cannot use it effectively.",
+            "Training requirements should be included in the decision.",
+            "The team's existing skills may influence implementation speed.",
+            "A familiar system may have adoption advantages.",
+            "The company should consider how much support employees will need."
+          ]
+        },
+        {
+          "argument_id": "pilot_implementation",
+          "category": "compromise",
+          "idea": "A pilot can test suitability before full adoption.",
+          "related_options": ["low_cost", "scalable", "pilot"],
+          "keywords": ["pilot", "testing", "risk"],
+          "variations": [
+            "We could test the technology with one team before wider adoption.",
+            "A pilot would provide evidence about performance and integration.",
+            "A limited implementation may reduce the risk of a costly mistake.",
+            "The company could evaluate both options through a small trial.",
+            "A staged decision would allow learning before full commitment."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "cost_or_scalability",
+          "category": "prioritization",
+          "text": "Should the company prioritize cost or scalability?"
+        },
+        {
+          "question_id": "vendor_support",
+          "category": "support",
+          "text": "How important is vendor support?"
+        },
+        {
+          "question_id": "employee_adaptation",
+          "category": "adoption",
+          "text": "How easily can employees adapt to the new technology?"
+        },
+        {
+          "question_id": "obsolescence",
+          "category": "future",
+          "text": "What happens if the technology becomes outdated?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "timeboxed_pilot_tco",
+          "idea": "Run a time-boxed pilot with one team to measure integration effort and multi-year total cost before committing.",
+          "variations": [
+            "A short pilot with one team verifies integration and adoption effort before signing a multi-year contract.",
+            "Testing the scalable platform in a bounded pilot validates real maintenance costs without full upfront risk.",
+            "A staged pilot lets us compare actual TCO and staff adaptation before company-wide rollout."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the main perspectives, benefits, concerns and alternatives within this scenario.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative", "compromise"]
+      },
+      "round_2": {
+        "objective": "Compare total cost of ownership, integration risks and long-term scalability.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    },
+    "sustainability_decision": {
+      "topic_id": "sustainability_decision",
+      "title": "Sustainability Decision",
+      "description": "A company wants to reduce its environmental impact, but sustainable changes may increase operational costs.",
+      "main_question": "Should the company prioritize sustainability even if it increases short-term costs?",
+      "options": [
+        { "id": "sustainability", "label": "Prioritize sustainability" },
+        { "id": "profitability", "label": "Prioritize short-term costs" },
+        { "id": "gradual", "label": "Gradual implementation" }
+      ],
+      "arguments": [
+        {
+          "argument_id": "environmental_benefit",
+          "category": "benefit",
+          "idea": "Sustainable practices reduce environmental impact.",
+          "related_options": ["sustainability"],
+          "keywords": ["environment", "impact", "responsibility"],
+          "variations": [
+            "Sustainable practices can reduce the company's environmental footprint.",
+            "Reducing resource consumption may benefit the wider community.",
+            "Environmental responsibility can be part of long-term business planning.",
+            "The company can contribute to lower emissions through operational changes.",
+            "Environmental impact should be considered alongside financial performance."
+          ]
+        },
+        {
+          "argument_id": "long_term_savings",
+          "category": "benefit",
+          "idea": "Initial sustainability investments may create long-term savings.",
+          "related_options": ["sustainability"],
+          "keywords": ["savings", "efficiency", "investment"],
+          "variations": [
+            "Efficient energy use may reduce costs over time.",
+            "An initial investment could produce savings across future operations.",
+            "Reducing waste can improve resource efficiency.",
+            "Long-term operating costs may fall after sustainable improvements.",
+            "The company should evaluate the full lifecycle cost."
+          ]
+        },
+        {
+          "argument_id": "short_term_cost",
+          "category": "concern",
+          "idea": "Higher initial costs can affect competitiveness.",
+          "related_options": ["profitability"],
+          "keywords": ["cost", "competitiveness", "budget"],
+          "variations": [
+            "Sustainable changes may increase short-term operating expenses.",
+            "Higher costs could make it harder to compete on price.",
+            "The company needs to consider whether it can afford the transition.",
+            "An expensive change may affect other business priorities.",
+            "Financial sustainability also matters when planning environmental improvements."
+          ]
+        },
+        {
+          "argument_id": "customer_preference",
+          "category": "benefit",
+          "idea": "Customers may prefer environmentally responsible companies.",
+          "related_options": ["sustainability"],
+          "keywords": ["customers", "reputation", "market"],
+          "variations": [
+            "Some customers may value companies that take environmental responsibility seriously.",
+            "Sustainable practices can strengthen brand reputation.",
+            "Environmental commitments may influence purchasing decisions.",
+            "Customers may expect companies to reduce unnecessary waste.",
+            "Responsible operations could support long-term customer trust."
+          ]
+        },
+        {
+          "argument_id": "regulatory_change",
+          "category": "concern",
+          "idea": "Regulatory requirements may become stricter over time.",
+          "related_options": ["sustainability"],
+          "keywords": ["regulation", "compliance", "future"],
+          "variations": [
+            "Future regulations may require changes to current operations.",
+            "Preparing early could reduce the cost of later compliance.",
+            "The company should consider likely environmental standards.",
+            "Waiting may make future adjustments more expensive.",
+            "Regulatory risk is relevant to long-term planning."
+          ]
+        },
+        {
+          "argument_id": "gradual_implementation",
+          "category": "compromise",
+          "idea": "Gradual implementation can reduce financial pressure.",
+          "related_options": ["sustainability", "profitability", "gradual"],
+          "keywords": ["phased", "budget", "implementation"],
+          "variations": [
+            "The company could introduce sustainable changes in stages.",
+            "A gradual approach may spread investment costs over time.",
+            "We could begin with the changes that provide the greatest environmental benefit per euro.",
+            "A phased plan may make the transition more financially realistic.",
+            "The company can measure results before expanding the programme."
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question_id": "profit_or_environment",
+          "category": "prioritization",
+          "text": "Should environmental impact outweigh short-term profit?"
+        },
+        {
+          "question_id": "measurement",
+          "category": "measurement",
+          "text": "How should sustainability improvements be measured?"
+        },
+        {
+          "question_id": "customer_cost",
+          "category": "pricing",
+          "text": "Should customers share the additional costs?"
+        },
+        {
+          "question_id": "highest_impact",
+          "category": "prioritization",
+          "text": "Which changes would provide the greatest environmental impact?"
+        }
+      ],
+      "compromises": [
+        {
+          "compromise_id": "roi_ranked_phased_transition",
+          "idea": "Prioritize high-impact efficiency upgrades that pay back early, then fund broader sustainability steps from those savings.",
+          "variations": [
+            "Starting with energy and waste reductions that generate quick savings protects margins while cutting emissions.",
+            "A phased roadmap ranked by environmental impact per euro spreads capital costs and builds regulatory readiness.",
+            "Reinvesting early efficiency savings into later sustainability milestones balances competitiveness and impact."
+          ]
+        }
+      ],
+      "round_1": {
+        "objective": "Explore the main perspectives, benefits, concerns and alternatives within this scenario.",
+        "preferred_argument_categories": ["benefit", "concern", "alternative", "compromise"]
+      },
+      "round_2": {
+        "objective": "Compare immediate and long-term costs, measurable environmental benefits and implementation risks.",
+        "strategies": [
+          "evaluate_consequence",
+          "compare_alternatives",
+          "identify_tradeoff",
+          "develop_proposal",
+          "seek_compromise",
+          "evaluate_feasibility"
+        ]
+      }
+    }
+  }
+}

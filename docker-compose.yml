@@ -17,15 +17,18 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/experiment_db}
       EXPERIMENT_CONDITION: ${EXPERIMENT_CONDITION:-condition_2}
       CONFIG_PATH: /app/config.yml
+      AI_CONFIG_PATH: /app/config/ai_config.json
     ports:
       - "8000:8000"
     volumes:
       - ./config.yml:/app/config.yml:ro
+      - ./config:/app/config:ro
       - ./backend/app:/app/app
       - ./backend/tests:/app/tests
     depends_on:

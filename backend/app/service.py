@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai_agent import (
     AgentDecisionContext,
     DiscussionMessageContext,
+    PERSONALITY_ORDER,
+    RuleBasedAIAgent,
     create_ai_agent,
 )
 from app.config import ActiveExperimentConfig, load_active_config
@@ -27,6 +29,7 @@ from app.models import (
     Message,
     Participant,
     Vote,
+    default_discussion_context,
     utc_now,
 )
 from app.schemas import (
@@ -36,8 +39,11 @@ from app.schemas import (
     ParticipantPublic,
     SLOT_DISPLAY_NAMES,
     SessionStateResponse,
+    TopicOptionPublic,
+    TopicSummaryPublic,
     VoteStatusPublic,
 )
+from app.topic_loader import TopicLoadError, TopicLoader, get_ai_config
 
 
 VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -49,7 +55,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     ExperimentPhase.COMPLETED.value: set(),
 }
 
-AISpec = tuple[UUID, str, str, Optional[str], Optional[str]]
+AISpec = tuple[UUID, str, str, Optional[str], Optional[str], str]
 
 
 class WebSocketManager:
@@ -88,24 +94,51 @@ ws_manager = WebSocketManager()
 
 
 class ExperimentService:
-    """Core session lifecycle, slot assignment, token auth, messaging, AI tasks, voting, and state machine."""
+    """Core session lifecycle, topic locking, token auth, messaging, AI tasks, voting, and state machine."""
 
-    _session_locks: dict[UUID, asyncio.Lock] = {}
+    _session_locks: dict[tuple[int, UUID], asyncio.Lock] = {}
     _timer_tasks: dict[UUID, asyncio.Task] = {}
     _ai_tasks: dict[UUID, list[asyncio.Task]] = {}
 
     @classmethod
     def get_session_lock(cls, session_id: UUID) -> asyncio.Lock:
-        if session_id not in cls._session_locks:
-            cls._session_locks[session_id] = asyncio.Lock()
-        return cls._session_locks[session_id]
+        loop_id = id(asyncio.get_running_loop())
+        key = (loop_id, session_id)
+        if key not in cls._session_locks:
+            cls._session_locks[key] = asyncio.Lock()
+        return cls._session_locks[key]
 
     @staticmethod
     def _extract_ai_specs(session: ExperimentSession) -> list[AISpec]:
+        ordered = sorted(session.participants, key=lambda p: p.slot_id)
+        specs: list[AISpec] = []
+        for idx, p in enumerate(p for p in ordered if p.participant_type == "ai"):
+            personality = p.personality or PERSONALITY_ORDER[idx % len(PERSONALITY_ORDER)]
+            specs.append((p.id, p.slot_id, p.display_name, p.provider, p.model, personality))
+        return specs
+
+    @staticmethod
+    def _build_topic_summary(topic_id: str) -> TopicSummaryPublic:
+        scenario = TopicLoader.load_topic(topic_id)
+        return TopicSummaryPublic(
+            topic_id=scenario.topic_id,
+            title=scenario.title,
+            description=scenario.description,
+            main_question=scenario.main_question,
+            options=[TopicOptionPublic(id=o.id, label=o.label) for o in scenario.options],
+        )
+
+    @classmethod
+    def list_available_topics(cls) -> list[TopicSummaryPublic]:
         return [
-            (p.id, p.slot_id, p.display_name, p.provider, p.model)
-            for p in session.participants
-            if p.participant_type == "ai"
+            TopicSummaryPublic(
+                topic_id=t.topic_id,
+                title=t.title,
+                description=t.description,
+                main_question=t.main_question,
+                options=[TopicOptionPublic(id=o.id, label=o.label) for o in t.options],
+            )
+            for t in TopicLoader.list_topics()
         ]
 
     @classmethod
@@ -117,9 +150,12 @@ class ExperimentService:
     @classmethod
     def cancel_ai_tasks(cls, session_id: UUID) -> None:
         tasks = cls._ai_tasks.pop(session_id, [])
-        current = asyncio.current_task()
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
         for task in tasks:
-            if not task.done() and task is not current:
+            if task is not current and not task.done():
                 task.cancel()
 
     @classmethod
@@ -128,6 +164,7 @@ class ExperimentService:
             cls.cancel_timer(sid)
         for sid in list(cls._ai_tasks.keys()):
             cls.cancel_ai_tasks(sid)
+        cls._session_locks.clear()
 
     @classmethod
     def schedule_discussion_timer(
@@ -160,25 +197,28 @@ class ExperimentService:
         if not ai_specs:
             return
 
+        ai_engine_cfg = get_ai_config()
         tasks: list[asyncio.Task] = []
         min_delay = cfg.ai.min_response_delay_seconds
         max_delay = cfg.ai.max_response_delay_seconds
-        max_msgs = cfg.ai.max_messages_per_round
+        max_msgs = min(cfg.ai.max_messages_per_round, ai_engine_cfg.discussion.max_messages_per_ai_per_round)
         duration = cfg.experiment.discussion_duration_seconds
 
-        for participant_id, slot_id, display_name, provider, model in ai_specs:
-            agent = create_ai_agent(provider=provider, model=model)
+        for ai_idx, (participant_id, slot_id, display_name, provider, model, personality) in enumerate(ai_specs):
+            agent = create_ai_agent(provider=provider, model=model, personality=personality)
 
             async def _ai_speaker_worker(
                 p_id: UUID = participant_id,
                 s_id: str = slot_id,
                 d_name: str = display_name,
+                p_personality: str = personality,
+                stagger_idx: int = ai_idx,
                 ai_impl=agent,
             ) -> None:
                 try:
                     cumulative_delay = 0.0
                     for msg_idx in range(max_msgs):
-                        delay = random.uniform(min_delay, max_delay)
+                        delay = random.uniform(min_delay, max_delay) + (stagger_idx * 1.5)
                         if msg_idx > 0:
                             delay = max(delay, duration * 0.35)
                         cumulative_delay += delay
@@ -187,46 +227,121 @@ class ExperimentService:
 
                         await asyncio.sleep(delay)
 
-                        async with AsyncSessionLocal() as db:
-                            session = await cls.get_session(db, session_id)
-                            if session.phase != expected_phase:
-                                return
+                        lock = cls.get_session_lock(session_id)
+                        public_msg: Optional[MessagePublic] = None
 
-                            public_msgs = await cls.list_public_messages(db, session)
-                            ctx = AgentDecisionContext(
-                                session_id=str(session_id),
-                                self_slot_id=s_id,
-                                self_display_name=d_name,
-                                round_number=round_number,
-                                message_index=msg_idx,
-                                participant_slots=sorted(p.slot_id for p in session.participants),
-                                messages=[
-                                    DiscussionMessageContext(
-                                        sender_id=m.sender_id,
-                                        sender_name=m.sender_name,
-                                        round_number=m.round_number,
-                                        content=m.content,
+                        async with lock:
+                            async with AsyncSessionLocal() as db:
+                                session = await cls.get_session(db, session_id)
+                                if session.phase != expected_phase:
+                                    return
+
+                                # Strict single-topic enforcement from locked session row
+                                locked_topic = TopicLoader.load_topic(session.selected_topic_id)
+                                public_msgs = await cls.list_public_messages(db, session)
+                                d_ctx = dict(session.discussion_context_json or default_discussion_context())
+
+                                ctx = AgentDecisionContext(
+                                    session_id=str(session_id),
+                                    self_slot_id=s_id,
+                                    self_display_name=d_name,
+                                    round_number=round_number,
+                                    message_index=msg_idx,
+                                    participant_slots=sorted(p.slot_id for p in session.participants),
+                                    messages=[
+                                        DiscussionMessageContext(
+                                            sender_id=m.sender_id,
+                                            sender_name=m.sender_name,
+                                            round_number=m.round_number,
+                                            content=m.content,
+                                        )
+                                        for m in public_msgs
+                                    ],
+                                    topic=locked_topic,
+                                    personality=p_personality,
+                                    discussion_context=d_ctx,
+                                )
+
+                                if isinstance(ai_impl, RuleBasedAIAgent):
+                                    outcome = ai_impl.generate_turn_with_state(ctx)
+                                    reply_text = outcome.content
+
+                                    introduced = list(d_ctx.get("introduced_arguments", []))
+                                    if outcome.argument_id and outcome.argument_id not in introduced:
+                                        introduced.append(outcome.argument_id)
+
+                                    asked = list(d_ctx.get("asked_questions", []))
+                                    if outcome.question_id and outcome.question_id not in asked:
+                                        asked.append(outcome.question_id)
+
+                                    used_strats = list(d_ctx.get("used_strategies", []))
+                                    used_strats.append(
+                                        {
+                                            "slot_id": s_id,
+                                            "round": round_number,
+                                            "strategy": outcome.strategy,
+                                        }
                                     )
-                                    for m in public_msgs
-                                ],
-                            )
-                            reply_text = await ai_impl.generate_response(ctx)
-                            audit = {
-                                "provider": ai_impl.provider,
-                                "model": ai_impl.model,
-                                "delay_seconds": round(delay, 2),
-                                "message_index": msg_idx,
-                            }
-                            await cls.add_message(
-                                db=db,
-                                session_id=session_id,
-                                participant_id=p_id,
-                                content=reply_text,
-                                audit_metadata=audit,
+
+                                    positions = dict(d_ctx.get("participant_positions", {}))
+                                    if outcome.stance_option:
+                                        positions[s_id] = outcome.stance_option
+
+                                    session.discussion_context_json = {
+                                        "introduced_arguments": introduced,
+                                        "asked_questions": asked,
+                                        "participant_positions": positions,
+                                        "used_strategies": used_strats,
+                                    }
+                                    audit = {
+                                        "provider": ai_impl.provider,
+                                        "model": ai_impl.model,
+                                        "topic_id": locked_topic.topic_id,
+                                        "personality": p_personality,
+                                        "strategy": outcome.strategy,
+                                        "argument_id": outcome.argument_id,
+                                        "question_id": outcome.question_id,
+                                        "compromise_id": outcome.compromise_id,
+                                        "delay_seconds": round(delay, 2),
+                                        "message_index": msg_idx,
+                                    }
+                                else:
+                                    reply_text = await ai_impl.generate_response(ctx)
+                                    audit = {
+                                        "provider": ai_impl.provider,
+                                        "model": ai_impl.model,
+                                        "topic_id": locked_topic.topic_id,
+                                        "personality": p_personality,
+                                        "delay_seconds": round(delay, 2),
+                                        "message_index": msg_idx,
+                                    }
+
+                                sender = next((p for p in session.participants if p.id == p_id), None)
+                                if not sender:
+                                    return
+
+                                msg = Message(
+                                    session_id=session.id,
+                                    participant_id=sender.id,
+                                    round_number=round_number,
+                                    content=reply_text,
+                                    audit_metadata=audit,
+                                    created_at=utc_now(),
+                                )
+                                db.add(msg)
+                                await db.commit()
+                                await db.refresh(msg)
+                                public_msg = cls._to_public_message(msg, sender)
+
+                        if public_msg is not None:
+                            await ws_manager.broadcast_to_session(
+                                session_id,
+                                "new_message",
+                                public_msg.model_dump(mode="json"),
                             )
                 except asyncio.CancelledError:
                     pass
-                except HTTPException:
+                except (HTTPException, TopicLoadError, ValueError):
                     pass
 
             tasks.append(asyncio.create_task(_ai_speaker_worker()))
@@ -246,13 +361,14 @@ class ExperimentService:
             return
 
         tasks: list[asyncio.Task] = []
-        for participant_id, slot_id, display_name, provider, model in ai_specs:
-            agent = create_ai_agent(provider=provider, model=model)
+        for participant_id, slot_id, display_name, provider, model, personality in ai_specs:
+            agent = create_ai_agent(provider=provider, model=model, personality=personality)
 
             async def _ai_voter_worker(
                 p_id: UUID = participant_id,
                 s_id: str = slot_id,
                 d_name: str = display_name,
+                p_personality: str = personality,
                 ai_impl=agent,
             ) -> None:
                 try:
@@ -262,6 +378,7 @@ class ExperimentService:
                         if session.phase != expected_phase:
                             return
 
+                        locked_topic = TopicLoader.load_topic(session.selected_topic_id)
                         public_msgs = await cls.list_public_messages(db, session)
                         ctx = AgentDecisionContext(
                             session_id=str(session_id),
@@ -279,6 +396,11 @@ class ExperimentService:
                                 )
                                 for m in public_msgs
                             ],
+                            topic=locked_topic,
+                            personality=p_personality,
+                            discussion_context=dict(
+                                session.discussion_context_json or default_discussion_context()
+                            ),
                         )
                         target_slot = await ai_impl.cast_vote(ctx)
                         await cls.submit_vote(
@@ -289,13 +411,12 @@ class ExperimentService:
                         )
                 except asyncio.CancelledError:
                     pass
-                except HTTPException:
+                except (HTTPException, TopicLoadError):
                     pass
 
             tasks.append(asyncio.create_task(_ai_voter_worker()))
 
         cls._ai_tasks[session_id] = tasks
-
 
     @classmethod
     async def export_session_csv(cls, db: AsyncSession, session_id: UUID) -> str:
@@ -348,6 +469,7 @@ class ExperimentService:
             [
                 "session_id",
                 "condition_key",
+                "selected_topic_id",
                 "record_type",
                 "round_number",
                 "actor_id",
@@ -366,6 +488,7 @@ class ExperimentService:
                 [
                     str(session.id),
                     session.condition,
+                    session.selected_topic_id,
                     "message",
                     m.round_number,
                     slot_by_id.get(m.participant_id, ""),
@@ -384,6 +507,7 @@ class ExperimentService:
                 [
                     str(session.id),
                     session.condition,
+                    session.selected_topic_id,
                     "vote",
                     v.round_number,
                     slot_by_id.get(v.voter_id, ""),
@@ -589,9 +713,14 @@ class ExperimentService:
         if session.phase == ExperimentPhase.COMPLETED.value:
             final_result = await cls.get_public_result(db, session)
 
+        topic_summary = cls._build_topic_summary(session.selected_topic_id)
+
         return SessionStateResponse(
             session_id=session.id,
             condition_key=session.condition,
+            selected_topic_id=session.selected_topic_id,
+            topic_locked=session.topic_locked,
+            selected_topic=topic_summary,
             phase=session.phase,
             current_round=cls._current_round(session.phase),
             discussion_duration_seconds=cfg.experiment.discussion_duration_seconds,
@@ -611,6 +740,7 @@ class ExperimentService:
         db: AsyncSession,
         default_cfg: ActiveExperimentConfig,
         condition_key: Optional[str] = None,
+        topic_id: Optional[str] = None,
     ) -> ExperimentSession:
         try:
             cfg = (
@@ -621,17 +751,32 @@ class ExperimentService:
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+        chosen_topic = topic_id if topic_id is not None else TopicLoader.DEFAULT_TOPIC_ID
+        try:
+            valid_topic_id = TopicLoader.validate_topic_id(chosen_topic)
+        except TopicLoadError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
         now = utc_now()
         session = ExperimentSession(
             condition=cfg.condition_key,
             phase=ExperimentPhase.WAITING.value,
+            selected_topic_id=valid_topic_id,
+            topic_locked=True,
+            discussion_context_json=default_discussion_context(),
             created_at=now,
         )
         db.add(session)
         await db.flush()
 
+        ai_counter = 0
         for slot in cfg.condition.participants:
             is_ai = slot.type == "ai"
+            assigned_personality: Optional[str] = None
+            if is_ai:
+                assigned_personality = PERSONALITY_ORDER[ai_counter % len(PERSONALITY_ORDER)]
+                ai_counter += 1
+
             participant = Participant(
                 session_id=session.id,
                 slot_id=slot.id,
@@ -639,6 +784,7 @@ class ExperimentService:
                 participant_type=slot.type,
                 provider=slot.provider if is_ai else None,
                 model=slot.model if is_ai else None,
+                personality=assigned_personality,
                 token_hash=None,
                 is_connected=is_ai,
                 joined_at=now if is_ai else None,
@@ -648,6 +794,23 @@ class ExperimentService:
         await db.commit()
         await db.refresh(session)
         return session
+
+    @classmethod
+    async def enforce_immutable_topic(
+        cls,
+        db: AsyncSession,
+        session_id: UUID,
+        requested_topic_id: str,
+    ) -> None:
+        session = await cls.get_session(db, session_id)
+        if session.topic_locked or session.selected_topic_id != requested_topic_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Session topic is locked to '{session.selected_topic_id}' "
+                    "and cannot be changed once selected."
+                ),
+            )
 
     @classmethod
     async def get_session(cls, db: AsyncSession, session_id: UUID) -> ExperimentSession:
@@ -763,6 +926,7 @@ class ExperimentService:
                 {
                     "phase": state.phase,
                     "current_round": state.current_round,
+                    "selected_topic_id": state.selected_topic_id,
                     "round_ends_at": state.round_ends_at.isoformat() if state.round_ends_at else None,
                 },
             )
@@ -1112,6 +1276,3 @@ class ExperimentService:
             if participant:
                 participant.is_connected = is_connected
                 await db.commit()
-
-
-                

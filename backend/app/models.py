@@ -5,6 +5,7 @@ from enum import Enum
 from typing import AsyncGenerator, Optional
 
 from sqlalchemy import (
+    UUID,
     Boolean,
     DateTime,
     ForeignKey,
@@ -14,26 +15,38 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+
+import sys
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.pool import NullPool
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:postgres@db:5432/experiment_db",
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+_engine_kwargs = {"echo": False, "future": True}
+if "pytest" in sys.modules or os.getenv("TESTING") == "1":
+    _engine_kwargs["poolclass"] = NullPool
+
+engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
+AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def default_discussion_context() -> dict:
+    return {
+        "introduced_arguments": [],
+        "asked_questions": [],
+        "participant_positions": {},
+        "used_strategies": [],
+    }
 
 
 class ExperimentPhase(str, Enum):
@@ -58,6 +71,17 @@ class ExperimentSession(Base):
         String(32),
         nullable=False,
         default=ExperimentPhase.WAITING.value,
+    )
+    selected_topic_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="remote_work_policy",
+    )
+    topic_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    discussion_context_json: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        default=default_discussion_context,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -90,6 +114,7 @@ class Participant(Base):
     participant_type: Mapped[str] = mapped_column(String(16), nullable=False)  # "human" | "ai"
     provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    personality: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     token_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     is_connected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     joined_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -171,12 +196,33 @@ class ExperimentResult(Base):
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if conn.dialect.name == "postgresql":
+            await conn.execute(
+                text(
+                    "ALTER TABLE sessions "
+                    "ADD COLUMN IF NOT EXISTS selected_topic_id VARCHAR(64) NOT NULL DEFAULT 'remote_work_policy'"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE sessions "
+                    "ADD COLUMN IF NOT EXISTS topic_locked BOOLEAN NOT NULL DEFAULT TRUE"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE sessions "
+                    "ADD COLUMN IF NOT EXISTS discussion_context_json JSON NOT NULL DEFAULT '{}'::json"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE participants "
+                    "ADD COLUMN IF NOT EXISTS personality VARCHAR(32)"
+                )
+            )
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
-
-
-
-        

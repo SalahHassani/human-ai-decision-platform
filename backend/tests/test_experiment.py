@@ -10,12 +10,14 @@ from app.service import ExperimentService
 
 @pytest_asyncio.fixture
 async def client():
+    ExperimentService.cancel_all_tasks()
     await engine.dispose()
     app.state.config = load_active_config(condition_key="condition_2")
     await init_db()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    ExperimentService.cancel_all_tasks()
     await engine.dispose()
 
 
@@ -24,6 +26,7 @@ def _assert_no_ai_leakage(payload: dict) -> None:
     assert "participant_type" not in serialized
     assert "rule_based" not in serialized
     assert "token_hash" not in serialized
+    assert '"personality"' not in serialized
 
 
 @pytest.mark.asyncio
@@ -288,105 +291,111 @@ async def test_automatic_discussion_timer_and_cancellation(client: AsyncClient):
     still_voting = (await client.get(f"/api/sessions/{session_id}")).json()
     assert still_voting["phase"] == "ROUND_1_VOTING"
 
+
 def test_websocket_broadcasts_and_reconnection_sync():
     from starlette.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
 
+    ExperimentService.cancel_all_tasks()
     app.state.config = load_active_config(condition_key="condition_2")
     admin_headers = {"X-Admin-Token": app.state.config.admin_token}
 
     with TestClient(app) as tc:
-        # Create a 2-human + 1-AI session and join both human slots
-        created = tc.post("/api/sessions", json={"condition_key": "condition_2"})
-        assert created.status_code == 201
-        session_id = created.json()["session_id"]
+        try:
+            # Create a 2-human + 1-AI session and join both human slots
+            created = tc.post("/api/sessions", json={"condition_key": "condition_2"})
+            assert created.status_code == 201
+            session_id = created.json()["session_id"]
 
-        p_a = tc.post(f"/api/sessions/{session_id}/join").json()
-        p_b = tc.post(f"/api/sessions/{session_id}/join").json()
-        tok_a = p_a["participant_token"]
-        tok_b = p_b["participant_token"]
+            p_a = tc.post(f"/api/sessions/{session_id}/join").json()
+            p_b = tc.post(f"/api/sessions/{session_id}/join").json()
+            tok_a = p_a["participant_token"]
+            tok_b = p_b["participant_token"]
 
-        # 1. Invalid token on WebSocket must be rejected
-        with pytest.raises(WebSocketDisconnect):
-            with tc.websocket_connect(f"/ws/sessions/{session_id}?token=invalid-token") as bad_ws:
-                bad_ws.receive_json()
+            # 1. Invalid token on WebSocket must be rejected
+            with pytest.raises(WebSocketDisconnect):
+                with tc.websocket_connect(f"/ws/sessions/{session_id}?token=invalid-token") as bad_ws:
+                    bad_ws.receive_json()
 
-        # 2. Connect Player A and Player B over WebSocket
-        with tc.websocket_connect(f"/ws/sessions/{session_id}?token={tok_a}") as ws_a:
-            with tc.websocket_connect(f"/ws/sessions/{session_id}?token={tok_b}") as ws_b:
-                # Drain any initial presence/sync frames if emitted
-                msg_res = tc.post(
+            # 2. Connect Player A and Player B over WebSocket
+            with tc.websocket_connect(f"/ws/sessions/{session_id}?token={tok_a}") as ws_a:
+                with tc.websocket_connect(f"/ws/sessions/{session_id}?token={tok_b}") as ws_b:
+                    msg_res = tc.post(
+                        f"/api/sessions/{session_id}/messages",
+                        headers={"X-Participant-Token": tok_a},
+                        json={"content": "Hello Player B and Player C!"},
+                    )
+                    assert msg_res.status_code == 201
+
+                    # Player B receives the real-time new_message broadcast without AI leakage
+                    received_events = []
+                    for _ in range(8):
+                        frame = ws_b.receive_json()
+                        _assert_no_ai_leakage(frame)
+                        received_events.append(frame)
+                        if (
+                            frame.get("event") == "new_message"
+                            and frame.get("payload", {}).get("content")
+                            == "Hello Player B and Player C!"
+                        ):
+                            break
+
+                    assert any(
+                        e.get("event") == "new_message"
+                        and e.get("payload", {}).get("sender_id") == "player_a"
+                        for e in received_events
+                    )
+
+                # 3. Simulate Player B disconnecting while Player A posts and advances phase
+                msg2_res = tc.post(
                     f"/api/sessions/{session_id}/messages",
                     headers={"X-Participant-Token": tok_a},
-                    json={"content": "Hello Player B and Player C!"},
+                    json={"content": "Message sent while Player B was disconnected"},
                 )
-                assert msg_res.status_code == 201
+                assert msg2_res.status_code == 201
 
-                # Player B receives the real-time new_message broadcast without AI leakage
-                received_events = []
-                for _ in range(5):
-                    frame = ws_b.receive_json()
+                adv_res = tc.post(f"/api/sessions/{session_id}/advance", headers=admin_headers)
+                assert adv_res.status_code == 200
+                assert adv_res.json()["phase"] == "ROUND_1_VOTING"
+
+                # Player A (still connected) receives the phase change broadcast
+                phase_frames = []
+                for _ in range(8):
+                    frame = ws_a.receive_json()
                     _assert_no_ai_leakage(frame)
-                    received_events.append(frame)
-                    if frame.get("event") == "new_message" and frame.get("payload", {}).get("content") == "Hello Player B and Player C!":
+                    phase_frames.append(frame)
+                    if frame.get("event") == "phase_changed":
                         break
+                assert any(e.get("event") == "phase_changed" for e in phase_frames)
 
-                assert any(
-                    e.get("event") == "new_message"
-                    and e.get("payload", {}).get("sender_id") == "player_a"
-                    for e in received_events
+            # 4. Player B reconnects and resynchronizes full session snapshot
+            resync_state = tc.get(f"/api/sessions/{session_id}").json()
+            assert resync_state["phase"] == "ROUND_1_VOTING"
+            contents = [m["content"] for m in resync_state["messages"]]
+            assert "Hello Player B and Player C!" in contents
+            assert "Message sent while Player B was disconnected" in contents
+            msg_ids = [m["id"] for m in resync_state["messages"]]
+            assert len(msg_ids) == len(set(msg_ids))
+
+            with tc.websocket_connect(f"/ws/sessions/{session_id}?token={tok_b}") as ws_b_reconnected:
+                vote_res = tc.post(
+                    f"/api/sessions/{session_id}/vote",
+                    headers={"X-Participant-Token": tok_a},
+                    json={"target_id": "player_b"},
                 )
+                assert vote_res.status_code == 201
 
-            # 3. Simulate Player B disconnecting (browser refresh / temporary network drop)
-            # While Player B is offline, Player A posts another message and phase advances to voting
-            msg2_res = tc.post(
-                f"/api/sessions/{session_id}/messages",
-                headers={"X-Participant-Token": tok_a},
-                json={"content": "Message sent while Player B was disconnected"},
-            )
-            assert msg2_res.status_code == 201
-
-            adv_res = tc.post(f"/api/sessions/{session_id}/advance", headers=admin_headers)
-            assert adv_res.status_code == 200
-            assert adv_res.json()["phase"] == "ROUND_1_VOTING"
-
-            # Player A (still connected) receives the phase change broadcast
-            phase_frames = []
-            for _ in range(5):
-                frame = ws_a.receive_json()
-                _assert_no_ai_leakage(frame)
-                phase_frames.append(frame)
-                if frame.get("event") == "phase_changed":
-                    break
-            assert any(e.get("event") == "phase_changed" for e in phase_frames)
-
-        # 4. Player B reconnects and resynchronizes full session snapshot
-        resync_state = tc.get(f"/api/sessions/{session_id}").json()
-        assert resync_state["phase"] == "ROUND_1_VOTING"
-        contents = [m["content"] for m in resync_state["messages"]]
-        assert "Hello Player B and Player C!" in contents
-        assert "Message sent while Player B was disconnected" in contents
-        # Ensure no duplicate message IDs in resynchronized history
-        msg_ids = [m["id"] for m in resync_state["messages"]]
-        assert len(msg_ids) == len(set(msg_ids))
-
-        with tc.websocket_connect(f"/ws/sessions/{session_id}?token={tok_b}") as ws_b_reconnected:
-            vote_res = tc.post(
-                f"/api/sessions/{session_id}/vote",
-                headers={"X-Participant-Token": tok_a},
-                json={"target_id": "player_b"},
-            )
-            assert vote_res.status_code == 201
-
-            vote_frames = []
-            for _ in range(5):
-                frame = ws_b_reconnected.receive_json()
-                _assert_no_ai_leakage(frame)
-                vote_frames.append(frame)
-                if frame.get("event") == "vote_status":
-                    break
-            assert any(e.get("event") == "vote_status" for e in vote_frames)
-
+                vote_frames = []
+                for _ in range(8):
+                    frame = ws_b_reconnected.receive_json()
+                    _assert_no_ai_leakage(frame)
+                    vote_frames.append(frame)
+                    if frame.get("event") == "vote_status":
+                        break
+                assert any(e.get("event") == "vote_status" for e in vote_frames)
+        finally:
+            ExperimentService.cancel_all_tasks()
+            tc.portal.call(engine.dispose)
 
 
 @pytest.mark.asyncio
@@ -457,5 +466,3 @@ async def test_csv_research_export_security_and_contents(client: AsyncClient):
     assert rows[0]["decision_maker_id"] == "player_b"
     assert rows[0]["player_b_total_votes"] == "4"
     assert sum(1 for r in rows if r["record_type"] == "vote") == 6
-
-    

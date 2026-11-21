@@ -12,15 +12,36 @@ SLOT_DISPLAY_NAMES = {
 }
 
 
+class TopicOptionPublic(BaseModel):
+    id: str
+    label: str
+
+
+class TopicSummaryPublic(BaseModel):
+    topic_id: str
+    title: str
+    description: str
+    main_question: str
+    options: list[TopicOptionPublic] = Field(default_factory=list)
+
+
 class CreateSessionRequest(BaseModel):
     condition_key: Optional[str] = Field(
         default=None,
         description="Optional override for condition_1, condition_2, or condition_3.",
     )
+    topic_id: Optional[str] = Field(
+        default=None,
+        description="Immutable scenario topic_id locked for the lifetime of this session.",
+    )
+
+
+class UpdateTopicRequest(BaseModel):
+    topic_id: str
 
 
 class ParticipantPublic(BaseModel):
-    """Strict public representation of a participant. Never includes participant_type."""
+    """Strict public representation of a participant. Never includes participant_type or personality."""
 
     id: str  # Neutral slot ID: player_a | player_b | player_c
     display_name: str  # Player A | Player B | Player C
@@ -76,6 +97,9 @@ class ExperimentResultPublic(BaseModel):
 class SessionStateResponse(BaseModel):
     session_id: UUID
     condition_key: str
+    selected_topic_id: str
+    topic_locked: bool
+    selected_topic: TopicSummaryPublic
     phase: str
     current_round: Optional[int] = None
     discussion_duration_seconds: int
@@ -94,6 +118,3 @@ class JoinSessionResponse(BaseModel):
     participant: ParticipantPublic
     participant_token: str
     session_state: SessionStateResponse
-
-
-    

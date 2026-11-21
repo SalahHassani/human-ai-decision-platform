@@ -27,6 +27,8 @@ from app.schemas import (
     SendMessageRequest,
     SessionStateResponse,
     SubmitVoteRequest,
+    TopicSummaryPublic,
+    UpdateTopicRequest,
     VoteStatusPublic,
 )
 from app.service import ExperimentService, ws_manager
@@ -54,12 +56,19 @@ def require_admin_access(
             detail="Valid X-Admin-Token header is required for administrative controls.",
         )
 
+
 async def get_current_participant(
     session_id: UUID,
     x_participant_token: Optional[str] = Header(default=None, alias="X-Participant-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> Participant:
     return await ExperimentService.authenticate_token(db, session_id, x_participant_token or "")
+
+
+@router.get("/api/topics", response_model=list[TopicSummaryPublic])
+async def list_topics():
+    """Return all available decision scenarios for session creation."""
+    return ExperimentService.list_available_topics()
 
 
 @router.post("/api/sessions", response_model=SessionStateResponse, status_code=201)
@@ -69,7 +78,26 @@ async def create_session(
     cfg: ActiveExperimentConfig = Depends(get_active_config),
 ):
     condition_override = payload.condition_key if payload else None
-    session = await ExperimentService.create_session(db, cfg, condition_key=condition_override)
+    topic_override = payload.topic_id if payload else None
+    session = await ExperimentService.create_session(
+        db,
+        cfg,
+        condition_key=condition_override,
+        topic_id=topic_override,
+    )
+    session_cfg = load_active_config(condition_key=session.condition)
+    return await ExperimentService.build_session_state(db, session, session_cfg)
+
+
+@router.patch("/api/sessions/{session_id}/topic", response_model=SessionStateResponse)
+async def update_session_topic(
+    session_id: UUID,
+    payload: UpdateTopicRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Topic is immutable once selected; any attempt to change it is rejected."""
+    await ExperimentService.enforce_immutable_topic(db, session_id, payload.topic_id)
+    session = await ExperimentService.get_session(db, session_id)
     session_cfg = load_active_config(condition_key=session.condition)
     return await ExperimentService.build_session_state(db, session, session_cfg)
 
@@ -82,18 +110,6 @@ async def get_active_session(
     session = await ExperimentService.get_or_create_active_session(db, cfg)
     session_cfg = load_active_config(condition_key=session.condition)
     return await ExperimentService.build_session_state(db, session, session_cfg)
-
-
-# @router.post("/api/sessions/active/reset", response_model=SessionStateResponse)
-# async def reset_active_session(
-#     payload: Optional[CreateSessionRequest] = None,
-#     db: AsyncSession = Depends(get_db),
-#     cfg: ActiveExperimentConfig = Depends(get_active_config),
-# ):
-#     condition_override = payload.condition_key if payload else None
-#     session = await ExperimentService.create_session(db, cfg, condition_key=condition_override)
-#     session_cfg = load_active_config(condition_key=session.condition)
-#     return await ExperimentService.build_session_state(db, session, session_cfg)
 
 
 @router.get("/api/sessions/{session_id}", response_model=SessionStateResponse)
@@ -180,12 +196,6 @@ async def get_results(
     return result
 
 
-# @router.post("/api/sessions/{session_id}/advance", response_model=SessionStateResponse)
-# async def advance_discussion_phase(session_id: UUID):
-#     """Demo/testing helper to expire an active discussion timer immediately."""
-#     return await ExperimentService.advance_discussion_if_active(session_id)
-
-
 @router.websocket("/ws/sessions/{session_id}")
 async def session_websocket(
     websocket: WebSocket,
@@ -224,9 +234,16 @@ async def reset_active_session(
 ):
     ExperimentService.cancel_all_tasks()
     condition_override = payload.condition_key if payload else None
-    session = await ExperimentService.create_session(db, cfg, condition_key=condition_override)
+    topic_override = payload.topic_id if payload else None
+    session = await ExperimentService.create_session(
+        db,
+        cfg,
+        condition_key=condition_override,
+        topic_id=topic_override,
+    )
     session_cfg = load_active_config(condition_key=session.condition)
     return await ExperimentService.build_session_state(db, session, session_cfg)
+
 
 @router.post(
     "/api/sessions/{session_id}/advance",
@@ -255,5 +272,3 @@ async def export_session_csv(
             "Content-Disposition": f'attachment; filename="session_{session_id}_export.csv"'
         },
     )
-
-
