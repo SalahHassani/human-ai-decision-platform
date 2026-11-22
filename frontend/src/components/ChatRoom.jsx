@@ -41,55 +41,47 @@ export default function ChatRoom({ sessionState, myParticipant, onSendMessage })
   }
 
   return (
-    <div className="exp1-card">
+    <div className="app-card">
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'flex-start',
           gap: 12,
-          marginBottom: 12,
+          marginBottom: 14,
         }}
       >
         <div>
-          <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 20 }}>
-            Round {currentRound} of 2 — Group Discussion
-          </h2>
-          <p style={{ margin: '4px 0 0', color: 'var(--slate-600)', fontSize: 13.5 }}>
-            {sessionState.selected_topic?.title ? (
-              <>
-                Topic: <strong>{sessionState.selected_topic.title}</strong> —{' '}
-              </>
-            ) : null}
-            Deliberate on the scenario and who among <strong>Player A</strong>,{' '}
-            <strong>Player B</strong>, and <strong>Player C</strong> should be Decision Maker.
+          <h2 className="app-heading">Round {currentRound} of 2 — Group Discussion</h2>
+          <p className="app-subtext" style={{ marginTop: 4 }}>
+            Discuss who among <strong>Player A</strong>, <strong>Player B</strong>, and{' '}
+            <strong>Player C</strong> should be elected as the Decision Maker.
           </p>
         </div>
 
-        <div className={`exp1-timer ${secondsLeft <= 10 ? 'is-urgent' : ''}`}>
+        <div className={`app-timer ${secondsLeft <= 10 ? 'is-urgent' : ''}`}>
           {secondsLeft}s
         </div>
       </div>
 
-      <div className="exp1-chat-feed">
+      <div className="app-chat-stream">
         {roundMessages.length === 0 && (
           <div
             style={{
-              color: 'var(--slate-500)',
+              color: 'var(--ink-subtle)',
               textAlign: 'center',
-              marginTop: 115,
+              margin: 'auto 0',
               fontSize: 13.5,
             }}
           >
-            No messages yet in Round {currentRound}. Share your perspective to start the
-            discussion.
+            No messages yet in Round {currentRound}. Say hello and share your thoughts!
           </div>
         )}
         {roundMessages.map((m) => {
           const isMe = m.sender_id === myParticipant?.id
           return (
-            <div key={m.id} className={`exp1-bubble ${isMe ? 'is-me' : 'is-other'}`}>
-              <div className="exp1-bubble-meta">
+            <div key={m.id} className={`app-bubble ${isMe ? 'is-me' : 'is-other'}`}>
+              <div className="app-bubble-meta">
                 {m.sender_name} {isMe ? '(You)' : ''}
               </div>
               <div>{m.content}</div>
@@ -106,13 +98,13 @@ export default function ChatRoom({ sessionState, myParticipant, onSendMessage })
           onChange={(e) => setDraft(e.target.value)}
           placeholder={`Message as ${myParticipant?.display_name || 'Participant'}...`}
           maxLength={1000}
-          className="exp1-select"
+          className="app-input"
         />
         <button
           type="submit"
           disabled={!draft.trim() || sending}
-          className="exp1-btn exp1-btn-primary"
-          style={{ padding: '10px 20px' }}
+          className="app-btn app-btn-primary"
+          style={{ padding: '10px 20px', flexShrink: 0 }}
         >
           Send
         </button>
@@ -120,3 +112,4 @@ export default function ChatRoom({ sessionState, myParticipant, onSendMessage })
     </div>
   )
 }
+
