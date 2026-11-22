@@ -1,0 +1,44 @@
+databases:
+  - name: decision-lab-db
+    plan: free
+    databaseName: decision_lab
+    user: decision_user
+
+services:
+  # 1. FastAPI + WebSocket Backend
+  - type: web
+    name: decision-lab-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: decision-lab-db
+          property: connectionString
+      - key: ADMIN_TOKEN
+        value: dev-admin-token
+      - key: OPENAI_API_KEY
+        sync: false # You will paste your API key safely in the Render dashboard
+
+  # 2. React / Vite Frontend
+  - type: web
+    name: decision-lab-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: decision-lab-backend
+          property: hostport
+      - key: VITE_ADMIN_TOKEN
+        value: dev-admin-token

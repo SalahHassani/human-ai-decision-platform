@@ -1,5 +1,7 @@
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = rawApiUrl.startsWith('http')
+  ? rawApiUrl.replace(/\/+$/, '')
+  : `https://${rawApiUrl.replace(/\/+$/, '')}`
 const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN || 'dev-admin-token'
 
 async function request(path, options = {}) {
@@ -138,3 +140,4 @@ export async function downloadSessionCsv(sessionId) {
 
   URL.revokeObjectURL(url)
 }
+

@@ -1,7 +1,12 @@
+// frontend/src/hooks/useExperimentSocket.js
+
 import { useEffect, useRef, useState } from 'react'
 import { getSessionState } from '../services/api'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = rawApiUrl.startsWith('http')
+  ? rawApiUrl.replace(/\/+$/, '')
+  : `https://${rawApiUrl.replace(/\/+$/, '')}`
 const WS_BASE = API_URL.replace(/^http/, 'ws')
 
 export function useExperimentSocket(sessionId, token, onFullSync, onEvent) {
