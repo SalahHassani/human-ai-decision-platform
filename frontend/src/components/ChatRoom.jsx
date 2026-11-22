@@ -7,7 +7,9 @@ export default function ChatRoom({ sessionState, myParticipant, onSendMessage })
   const bottomRef = useRef(null)
 
   const currentRound = sessionState.current_round || 1
-  const roundMessages = (sessionState.messages || []).filter((m) => m.round_number === currentRound)
+  const roundMessages = (sessionState.messages || []).filter(
+    (m) => m.round_number === currentRound
+  )
 
   useEffect(() => {
     if (!sessionState.round_ends_at) return undefined
@@ -39,74 +41,58 @@ export default function ChatRoom({ sessionState, myParticipant, onSendMessage })
   }
 
   return (
-    <div style={cardStyle}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+    <div className="exp1-card">
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 12,
+          marginBottom: 12,
+        }}
+      >
         <div>
-          <h2 style={{ margin: 0 }}>Round {currentRound} of 2 — Group Discussion</h2>
-          <p style={{ margin: '4px 0 0', color: '#4b5563', fontSize: 14 }}>
-            Discuss who among <strong>Player A</strong>, <strong>Player B</strong>, and{' '}
-            <strong>Player C</strong> should be elected as the Decision Maker.
+          <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 20 }}>
+            Round {currentRound} of 2 — Group Discussion
+          </h2>
+          <p style={{ margin: '4px 0 0', color: 'var(--slate-600)', fontSize: 13.5 }}>
+            {sessionState.selected_topic?.title ? (
+              <>
+                Topic: <strong>{sessionState.selected_topic.title}</strong> —{' '}
+              </>
+            ) : null}
+            Deliberate on the scenario and who among <strong>Player A</strong>,{' '}
+            <strong>Player B</strong>, and <strong>Player C</strong> should be Decision Maker.
           </p>
         </div>
-        <div
-          style={{
-            padding: '8px 14px',
-            borderRadius: 8,
-            background: secondsLeft <= 10 ? '#fef2f2' : '#f3f4f6',
-            color: secondsLeft <= 10 ? '#b91c1c' : '#111827',
-            fontWeight: 700,
-            fontVariantNumeric: 'tabular-nums',
-            fontSize: 18,
-          }}
-        >
+
+        <div className={`exp1-timer ${secondsLeft <= 10 ? 'is-urgent' : ''}`}>
           {secondsLeft}s
         </div>
       </div>
 
-      <div
-        style={{
-          height: 300,
-          overflowY: 'auto',
-          border: '1px solid #e5e7eb',
-          borderRadius: 8,
-          padding: 12,
-          background: '#f9fafb',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-        }}
-      >
+      <div className="exp1-chat-feed">
         {roundMessages.length === 0 && (
-          <div style={{ color: '#6b7280', textAlign: 'center', marginTop: 110 }}>
-            No messages yet in Round {currentRound}. Say hello and share your thoughts!
+          <div
+            style={{
+              color: 'var(--slate-500)',
+              textAlign: 'center',
+              marginTop: 115,
+              fontSize: 13.5,
+            }}
+          >
+            No messages yet in Round {currentRound}. Share your perspective to start the
+            discussion.
           </div>
         )}
         {roundMessages.map((m) => {
           const isMe = m.sender_id === myParticipant?.id
           return (
-            <div
-              key={m.id}
-              style={{
-                alignSelf: isMe ? 'flex-end' : 'flex-start',
-                maxWidth: '78%',
-                background: isMe ? '#2563eb' : '#ffffff',
-                color: isMe ? '#ffffff' : '#111827',
-                border: isMe ? 'none' : '1px solid #e5e7eb',
-                borderRadius: 10,
-                padding: '8px 12px',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  marginBottom: 2,
-                  opacity: isMe ? 0.9 : 0.7,
-                }}
-              >
+            <div key={m.id} className={`exp1-bubble ${isMe ? 'is-me' : 'is-other'}`}>
+              <div className="exp1-bubble-meta">
                 {m.sender_name} {isMe ? '(You)' : ''}
               </div>
-              <div style={{ fontSize: 14, lineHeight: 1.4 }}>{m.content}</div>
+              <div>{m.content}</div>
             </div>
           )
         })}
@@ -120,26 +106,13 @@ export default function ChatRoom({ sessionState, myParticipant, onSendMessage })
           onChange={(e) => setDraft(e.target.value)}
           placeholder={`Message as ${myParticipant?.display_name || 'Participant'}...`}
           maxLength={1000}
-          style={{
-            flex: 1,
-            padding: '10px 12px',
-            borderRadius: 8,
-            border: '1px solid #d1d5db',
-            fontSize: 14,
-          }}
+          className="exp1-select"
         />
         <button
           type="submit"
           disabled={!draft.trim() || sending}
-          style={{
-            padding: '10px 18px',
-            borderRadius: 8,
-            border: 'none',
-            background: !draft.trim() || sending ? '#93c5fd' : '#2563eb',
-            color: '#ffffff',
-            fontWeight: 600,
-            cursor: !draft.trim() || sending ? 'not-allowed' : 'pointer',
-          }}
+          className="exp1-btn exp1-btn-primary"
+          style={{ padding: '10px 20px' }}
         >
           Send
         </button>
@@ -147,12 +120,3 @@ export default function ChatRoom({ sessionState, myParticipant, onSendMessage })
     </div>
   )
 }
-
-const cardStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
-  padding: 24,
-  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-}
-

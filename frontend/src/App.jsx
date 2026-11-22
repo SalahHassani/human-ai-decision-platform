@@ -14,8 +14,17 @@ import WaitingRoom from './components/WaitingRoom'
 import ChatRoom from './components/ChatRoom'
 import VotingPanel from './components/VotingPanel'
 import ResultsView from './components/ResultsView'
+import './styles/experiment1.css'
 
 const STORAGE_KEY = 'chm_experiment_auth_v1'
+
+const PHASE_STEPS = [
+  { key: 'WAITING', label: '1. Lobby & Ready' },
+  { key: 'ROUND_1_DISCUSSION', label: '2. Round 1 Chat' },
+  { key: 'ROUND_1_VOTING', label: '3. Round 1 Vote' },
+  { key: 'ROUND_2_DISCUSSION', label: '4. Round 2 Chat' },
+  { key: 'ROUND_2_VOTING', label: '5. Final Vote' },
+]
 
 export default function App() {
   const [sessionState, setSessionState] = useState(null)
@@ -182,178 +191,141 @@ export default function App() {
     }
   }
 
-  const isDiscussion =
-    sessionState?.phase === 'ROUND_1_DISCUSSION' || sessionState?.phase === 'ROUND_2_DISCUSSION'
-  const isVoting =
-    sessionState?.phase === 'ROUND_1_VOTING' || sessionState?.phase === 'ROUND_2_VOTING'
+  const phase = sessionState?.phase || 'WAITING'
+  const isDiscussion = phase === 'ROUND_1_DISCUSSION' || phase === 'ROUND_2_DISCUSSION'
+  const isVoting = phase === 'ROUND_1_VOTING' || phase === 'ROUND_2_VOTING'
+  const activeStepIndex = PHASE_STEPS.findIndex((s) => s.key === phase)
 
   const previewTopic =
     topics.find((t) => t.topic_id === selectedTopicId) || sessionState?.selected_topic
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#f3f4f6',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
-        color: '#111827',
-        padding: '24px 16px',
-        boxSizing: 'border-box',
-      }}
-    >
-      <div style={{ maxWidth: 760, margin: '0 auto' }}>
-        <header
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 20,
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
+    <div className="exp1-shell">
+      <div className="exp1-container">
+        <header className="exp1-topbar">
           <div>
-            <h1 style={{ margin: 0, fontSize: 22 }}>Group Decision-Making Experiment</h1>
-            <div style={{ fontSize: 13, color: '#6b7280', marginTop: 2 }}>
-              Session: {sessionState?.session_id?.slice(0, 8) || '...'}
-              {auth?.participant ? ` • You are ${auth.participant.display_name}` : ''}
-              {auth ? (connected ? ' • Live' : ' • Reconnecting...') : ''}
+            <div className="exp1-brand-kicker">Research Workbench • Multi-Agent Decision Lab</div>
+            <h1 className="exp1-title">Group Decision-Making Experiment</h1>
+            <div className="exp1-meta-row">
+              <span className="exp1-mono-tag">
+                ID {sessionState?.session_id?.slice(0, 8) || '--------'}
+              </span>
+              {sessionState?.condition_key && (
+                <span className="exp1-mono-tag">{sessionState.condition_key}</span>
+              )}
+              {auth?.participant && (
+                <span>
+                  Role: <strong>{auth.participant.display_name}</strong>
+                </span>
+              )}
+              {auth && (
+                <span
+                  className={`exp1-status-dot ${connected ? 'is-live' : 'is-reconnecting'}`}
+                >
+                  {connected ? 'Live Stream' : 'Reconnecting'}
+                </span>
+              )}
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className="exp1-actions">
             {isDiscussion && (
-              <button type="button" onClick={handleSkipTimer} style={secondaryBtnStyle}>
+              <button
+                type="button"
+                onClick={handleSkipTimer}
+                className="exp1-btn exp1-btn-ghost-dark"
+              >
                 End Discussion Now
               </button>
             )}
             <button
               type="button"
-              onClick={() => handleReset(sessionState?.condition_key, sessionState?.selected_topic_id)}
-              style={secondaryBtnStyle}
+              onClick={() =>
+                handleReset(sessionState?.condition_key, sessionState?.selected_topic_id)
+              }
+              className="exp1-btn exp1-btn-ghost-dark"
             >
               Reset Session
             </button>
           </div>
         </header>
 
-        {error && (
-          <div
-            style={{
-              padding: 12,
-              marginBottom: 16,
-              borderRadius: 8,
-              background: '#fef2f2',
-              color: '#991b1b',
-              border: '1px solid #fecaca',
-              fontSize: 14,
-            }}
-          >
-            {error}
+        {sessionState && (
+          <nav aria-label="Experiment progression" className="exp1-stepper">
+            {PHASE_STEPS.map((step, idx) => {
+              const isCurrent = step.key === phase
+              const isDone = phase === 'COMPLETED' || (activeStepIndex > idx && activeStepIndex !== -1)
+              return (
+                <div
+                  key={step.key}
+                  className={`exp1-step ${isCurrent ? 'is-active' : ''} ${isDone ? 'is-done' : ''}`}
+                >
+                  <span>{step.label}</span>
+                </div>
+              )
+            })}
+          </nav>
+        )}
+
+        {error && <div className="exp1-error">{error}</div>}
+
+        {loading && (
+          <div className="exp1-card" style={{ marginTop: 16, color: 'var(--slate-600)' }}>
+            Loading session state...
           </div>
         )}
 
-        {loading && <div style={{ color: '#6b7280' }}>Loading session...</div>}
-
         {!loading && sessionState && !auth && (
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e5e7eb',
-              borderRadius: 10,
-              padding: 28,
-              textAlign: 'center',
-              boxSizing: 'border-box',
-              overflow: 'hidden',
-            }}
-          >
-            <h2 style={{ marginTop: 0 }}>Join Experiment Session</h2>
-            <p style={{ color: '#4b5563', maxWidth: 520, margin: '8px auto 18px' }}>
+          <div className="exp1-card" style={{ marginTop: 16, textAlign: 'center' }}>
+            <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 20 }}>
+              Join Experiment Session
+            </h2>
+            <p
+              style={{
+                color: 'var(--slate-600)',
+                maxWidth: 560,
+                margin: '8px auto 0',
+                fontSize: 14,
+                lineHeight: 1.55,
+              }}
+            >
               You will be assigned a neutral identifier (Player A, Player B, or Player C).
-              Discuss the locked scenario across two 1-minute rounds and vote for the Decision Maker.
+              Collaborate on the locked scenario across two discussion rounds and vote for the
+              Decision Maker.
             </p>
 
             {sessionState.selected_topic && (
-              <div
-                style={{
-                  textAlign: 'left',
-                  maxWidth: 560,
-                  margin: '0 auto 20px',
-                  padding: 14,
-                  borderRadius: 8,
-                  background: '#f8fafc',
-                  border: '1px solid #cbd5e1',
-                  boxSizing: 'border-box',
-                }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', textTransform: 'uppercase' }}>
-                  Active Session Topic (Locked)
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>
-                  {sessionState.selected_topic.title}
-                </div>
-                <div style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>
-                  {sessionState.selected_topic.description}
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', marginTop: 6 }}>
+              <div className="exp1-topic-box">
+                <div className="exp1-topic-badge">Active Session Topic (Locked)</div>
+                <div className="exp1-topic-title">{sessionState.selected_topic.title}</div>
+                <p className="exp1-topic-desc">{sessionState.selected_topic.description}</p>
+                <div className="exp1-topic-question">
                   Question: {sessionState.selected_topic.main_question}
                 </div>
               </div>
             )}
 
-            <button type="button" onClick={handleJoin} style={primaryBtnStyle}>
-              Join Active Session ({sessionState.joined_humans}/{sessionState.required_humans} Humans Joined)
+            <button type="button" onClick={handleJoin} className="exp1-btn exp1-btn-primary">
+              Join Active Session ({sessionState.joined_humans}/{sessionState.required_humans}{' '}
+              Humans Joined)
             </button>
 
-            <div
-              style={{
-                marginTop: 28,
-                paddingTop: 18,
-                borderTop: '1px solid #e5e7eb',
-                textAlign: 'left',
-                maxWidth: 560,
-                marginLeft: 'auto',
-                marginRight: 'auto',
-                boxSizing: 'border-box',
-              }}
-            >
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+            <div className="exp1-setup-panel">
+              <div className="exp1-label" style={{ fontSize: 13.5, color: 'var(--slate-800)' }}>
                 New Session Setup (Condition &amp; Locked Discussion Topic)
               </div>
 
               {topics.length > 0 && (
-                <div style={{ marginBottom: 14 }}>
-                  <label
-                    htmlFor="topic-select"
-                    style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 6 }}
-                  >
+                <div style={{ marginTop: 10 }}>
+                  <label htmlFor="topic-select" className="exp1-label">
                     Select Discussion Topic (cannot be changed once session starts):
                   </label>
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      width: '100%',
-                    }}
-                  >
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
                     <select
                       id="topic-select"
                       value={selectedTopicId}
                       onChange={(e) => setSelectedTopicId(e.target.value)}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        width: '100%',
-                        padding: '8px 10px',
-                        borderRadius: 6,
-                        border: '1px solid #d1d5db',
-                        fontSize: 13,
-                        background: '#ffffff',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
+                      className="exp1-select"
                     >
                       {topics.map((t) => (
                         <option key={t.topic_id} value={t.topic_id}>
@@ -364,37 +336,37 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => handleReset(sessionState.condition_key, selectedTopicId)}
-                      style={{ ...secondaryBtnStyle, whiteSpace: 'nowrap', flexShrink: 0 }}
+                      className="exp1-btn exp1-btn-secondary"
+                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                     >
                       Start with Topic
                     </button>
                   </div>
                   {previewTopic && (
-                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6, lineHeight: 1.4 }}>
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        color: 'var(--slate-500)',
+                        marginTop: 7,
+                        lineHeight: 1.45,
+                      }}
+                    >
                       {previewTopic.description}
                     </div>
                   )}
                 </div>
               )}
 
-              <div style={{ fontSize: 13, color: '#6b7280', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                <span>Switch Condition:</span>
+              <div className="exp1-condition-row">
+                <span style={{ fontWeight: 600 }}>Switch Condition:</span>
                 {['condition_1', 'condition_2', 'condition_3'].map((cKey) => (
                   <button
                     key={cKey}
                     type="button"
                     onClick={() => handleReset(cKey, selectedTopicId)}
-                    style={{
-                      padding: '4px 10px',
-                      borderRadius: 6,
-                      border:
-                        sessionState.condition_key === cKey
-                          ? '1px solid #2563eb'
-                          : '1px solid #d1d5db',
-                      background: sessionState.condition_key === cKey ? '#eff6ff' : '#ffffff',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                    }}
+                    className={`exp1-cond-pill ${
+                      sessionState.condition_key === cKey ? 'is-selected' : ''
+                    }`}
                   >
                     {cKey === 'condition_1'
                       ? '3 Humans'
@@ -408,52 +380,32 @@ export default function App() {
           </div>
         )}
 
-        {!loading && sessionState && auth && sessionState.phase === 'WAITING' && (
-          <WaitingRoom sessionState={sessionState} myParticipant={auth.participant} />
-        )}
+        <main className="exp1-main">
+          {!loading && sessionState && auth && phase === 'WAITING' && (
+            <WaitingRoom sessionState={sessionState} myParticipant={auth.participant} />
+          )}
 
-        {!loading && sessionState && auth && isDiscussion && (
-          <ChatRoom
-            sessionState={sessionState}
-            myParticipant={auth.participant}
-            onSendMessage={handleSendMessage}
-          />
-        )}
+          {!loading && sessionState && auth && isDiscussion && (
+            <ChatRoom
+              sessionState={sessionState}
+              myParticipant={auth.participant}
+              onSendMessage={handleSendMessage}
+            />
+          )}
 
-        {!loading && sessionState && auth && isVoting && (
-          <VotingPanel
-            sessionState={sessionState}
-            myParticipant={auth.participant}
-            onSubmitVote={handleSubmitVote}
-          />
-        )}
+          {!loading && sessionState && auth && isVoting && (
+            <VotingPanel
+              sessionState={sessionState}
+              myParticipant={auth.participant}
+              onSubmitVote={handleSubmitVote}
+            />
+          )}
 
-        {!loading && sessionState && auth && sessionState.phase === 'COMPLETED' && (
-          <ResultsView sessionState={sessionState} myParticipant={auth.participant} />
-        )}
+          {!loading && sessionState && auth && phase === 'COMPLETED' && (
+            <ResultsView sessionState={sessionState} myParticipant={auth.participant} />
+          )}
+        </main>
       </div>
     </div>
   )
-}
-
-const primaryBtnStyle = {
-  padding: '12px 24px',
-  borderRadius: 8,
-  border: 'none',
-  background: '#2563eb',
-  color: '#ffffff',
-  fontWeight: 600,
-  fontSize: 15,
-  cursor: 'pointer',
-}
-
-const secondaryBtnStyle = {
-  padding: '7px 12px',
-  borderRadius: 6,
-  border: '1px solid #d1d5db',
-  background: '#ffffff',
-  color: '#374151',
-  fontSize: 13,
-  fontWeight: 500,
-  cursor: 'pointer',
 }
