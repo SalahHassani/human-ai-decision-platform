@@ -23,10 +23,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.pool import NullPool
 
-DATABASE_URL = os.getenv(
+raw_database_url = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:postgres@db:5432/experiment_db",
 )
+if raw_database_url.startswith("postgres://"):
+    DATABASE_URL = "postgresql+asyncpg://" + raw_database_url[len("postgres://") :]
+elif raw_database_url.startswith("postgresql://"):
+    DATABASE_URL = "postgresql+asyncpg://" + raw_database_url[len("postgresql://") :]
+else:
+    DATABASE_URL = raw_database_url
 
 _engine_kwargs = {"echo": False, "future": True}
 if "pytest" in sys.modules or os.getenv("TESTING") == "1":
